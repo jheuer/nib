@@ -195,6 +195,46 @@ Rough budget: Phase 1 ≈ 2–3 focused days. Phase 2 ≈ 1 day on motion math +
 
 ---
 
+## Reference sources — watch for parity + compatibility
+
+Two upstream sources drive what nib needs to track. Skim them when cutting a
+release or when behavior diverges from what the hardware expects.
+
+### Axidraw Python library releases
+**https://github.com/evil-mad/axidraw/releases**
+
+The canonical implementation of the AxiDraw motion stack (SVG parsing, path
+optimization, LM motion planning, pen control). Watch release notes for:
+- Changes to `motion.py` — LM math, trapezoid shape, junction handling. A
+  behavior change here is the best signal our planner needs a revisit.
+- Changes to `axidraw_conf.py` — defaults (servo_min / servo_max, speeds,
+  accel). If the canonical defaults drift, our constants should track them.
+- New high-level features (plot modes, reordering strategies) — candidates to
+  port into nib if they meet a real need.
+- Deprecated / removed commands — signals to remove from our support list.
+
+Local clone path: memory note `reference_axidraw_codebase.md`. Re-clone for
+a fresh release when diffing.
+
+### EBB firmware command reference
+**https://evil-mad.github.io/EggBot/ebb.html**
+
+The authoritative spec for EBB commands (SM, LM, SP, SC, S2, QS, QM, HM, ES,
+EM, V, R…). Watch for:
+- New firmware versions adding commands — we've seen LM land in 2.7, HM in
+  2.6.2, QS in 2.4.3. Future commands may unlock features worth adopting
+  (e.g. faster motion primitives, richer queries).
+- Documented rate/accel register encoding — our `lmRateReg`/`lmAccelReg` are
+  derived from the LM section of this doc; a spec change means re-derivation.
+- SP/SC behavior clarifications — Jeff's hardware on firmware 2.8.1 has
+  SP,0/SP,1 no-op on repeated-state transitions (we bypass with S2). A docs
+  update might change whether our workaround is still required.
+- Firmware-version feature gates — update `LM_MIN_FIRMWARE` and add new
+  version constants when new commands land.
+
+**Triggers to pull both:** before a release, when something misbehaves in
+ways that look motion-math-related, or quarterly as a routine check.
+
 ## Future considerations
 
 ### Reference-diff against the Python axidraw library
