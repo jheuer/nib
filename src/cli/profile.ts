@@ -79,6 +79,8 @@ const list = defineCommand({
       process.stdout.write(JSON.stringify(profiles, null, 2) + '\n')
       return
     }
+    process.stderr.write(chalk.dim('  Name              Speeds & accel                   Description\n'))
+    process.stderr.write(chalk.dim('  ' + '─'.repeat(75) + '\n'))
     for (const p of profiles) {
       process.stderr.write(formatProfileRow(p) + '\n')
     }

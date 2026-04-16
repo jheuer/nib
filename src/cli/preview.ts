@@ -25,7 +25,7 @@ export const previewCmd = defineCommand({
   args: {
     file: {
       type: 'positional',
-      description: 'SVG file (or - for stdin)',
+      description: 'SVG file (use /dev/stdin to read from a pipe)',
     },
     profile: {
       type: 'string',
@@ -58,7 +58,7 @@ export const previewCmd = defineCommand({
 
     // ── Read SVG ──────────────────────────────────────────────────────────────
     let svg: string
-    if (filePath === '-') {
+    if (filePath === '/dev/stdin') {
       const chunks: Buffer[] = []
       for await (const chunk of process.stdin) chunks.push(chunk as Buffer)
       svg = Buffer.concat(chunks).toString('utf-8')

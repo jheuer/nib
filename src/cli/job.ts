@@ -25,6 +25,10 @@ const list = defineCommand({
       process.stdout.write(JSON.stringify(jobs, null, 2) + '\n')
       return
     }
+    process.stderr.write(
+      chalk.dim('   #     Date              File                      Profile         Status    Duration\n')
+    )
+    process.stderr.write(chalk.dim('   ' + '─'.repeat(85) + '\n'))
     for (const job of jobs) {
       process.stderr.write(formatJobRow(job) + '\n')
     }

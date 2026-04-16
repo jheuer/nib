@@ -278,26 +278,15 @@ const initCmd = defineCommand({
   },
 })
 
-// ─── completions ──────────────────────────────────────────────────────────────
-
-const completionsCmd = defineCommand({
-  meta: { name: 'completions', description: 'Generate shell completions' },
-  args: {
-    shell: { type: 'positional', description: 'zsh | bash | fish' },
-  },
-  async run(_ctx) {
-    process.stderr.write('Error: completions not yet implemented\n')
-    process.exit(1)
-  },
-})
-
 // ─── Root ─────────────────────────────────────────────────────────────────────
 
 const main = defineCommand({
   meta: {
     name: 'nib',
     version: '0.1.0',
-    description: 'Ergonomic CLI for the AxiDraw plotter',
+    description:
+      'Ergonomic CLI for the AxiDraw plotter. Global flags: -v/--verbose, -V/--version. ' +
+      'Env: NIB_PORT, NIB_PROFILE, NIB_VERBOSE.',
   },
   subCommands: {
     plot: plotCmd,
@@ -314,7 +303,6 @@ const main = defineCommand({
     fw: fwCmd,
     config: configCmd,
     init: initCmd,
-    completions: completionsCmd,
   },
 })
 
@@ -360,5 +348,28 @@ process.on('SIGINT', () => {
   process.stderr.write('\n')
   process.exit(130)
 })
+
+// ─── Pre-runMain argv shims ───────────────────────────────────────────────────
+// Citty binds `--version` from the meta but not `-V`, and there's no native
+// way to register a global `--verbose`/`-v` that propagates before any command
+// runs. Handle both here so every subcommand sees the effects.
+
+const argv = process.argv.slice(2)
+
+// `-V` → `--version` alias (POSIX-ish convention used by many tools)
+if (argv.length > 0 && argv[0] === '-V') argv[0] = '--version'
+
+// `--verbose` / `-v` sets NIB_VERBOSE for the rest of the session so every
+// EBB command prints its SM/LM payload. Strip the flag before citty parses.
+for (let i = argv.length - 1; i >= 0; i--) {
+  if (argv[i] === '--verbose' || argv[i] === '-v') {
+    process.env.NIB_VERBOSE = '1'
+    argv.splice(i, 1)
+  }
+}
+
+// Splice back into process.argv so runMain sees the modified list.
+process.argv.length = 2
+process.argv.push(...argv)
 
 runMain(main)
