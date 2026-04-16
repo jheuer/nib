@@ -14,10 +14,11 @@ import type { Job, ResolvedProfile } from '../core/job.ts'
 import type { PlotEmitter } from '../core/events.ts'
 import type { RunJobResult } from './types.ts'
 import {
-  EBBPort, findEbbPort,
+  EbbCommands,
   SPEED_PENDOWN_MAX_MMS, SPEED_PENUP_MAX_MMS,
   LM_MIN_FIRMWARE, firmwareAtLeast,
 } from './ebb-protocol.ts'
+import type { EbbTransport } from './transport.ts'
 import { svgToMoves } from './svg-to-moves.ts'
 import { reorder, type OptimizeLevel } from '../core/reorder.ts'
 import { planMove, planStroke, optionsForProfile } from '../core/planner.ts'
@@ -26,26 +27,24 @@ import { isInEnvelope, type Envelope } from '../core/envelope.ts'
 // ─── EBBBackend ───────────────────────────────────────────────────────────────
 
 export class EBBBackend implements PlotBackend {
-  private ebb = new EBBPort()
+  private ebb: EbbCommands
   private currentX = 0
   private currentY = 0
   private penIsDown = false
   private useLm = false
 
+  constructor(transport: EbbTransport) {
+    this.ebb = new EbbCommands(transport)
+  }
+
   // ── PlotBackend interface ─────────────────────────────────────────────────
 
-  async connect(port: string): Promise<void> {
-    const resolvedPort = (port || await findEbbPort()) ?? ''
-    if (!resolvedPort) {
-      throw new Error(
-        'No EBB/AxiDraw device found. ' +
-        'Check that the USB cable is connected and the device is powered.'
-      )
-    }
-    await this.ebb.open(resolvedPort)
-
+  /**
+   * Initialize the already-connected transport for plotting:
+   * probe firmware version, home pen up, enable motors at 1/16 microstep.
+   */
+  async connect(_port: string = ''): Promise<void> {
     // Firmware-capability gate for LM (trapezoid accel).
-    // Only auto-upgrade on ≥ 2.7; SM stays the default otherwise.
     try {
       const fw = await this.ebb.firmwareVersion()
       this.useLm = firmwareAtLeast(fw, LM_MIN_FIRMWARE)
@@ -54,7 +53,7 @@ export class EBBBackend implements PlotBackend {
     }
 
     await this.ebb.penUp()
-    await this.ebb.enableMotors(1, 1)  // 1/16 microstepping (EM=1, not 5; see ebb-protocol.ts)
+    await this.ebb.enableMotors(1, 1)  // 1/16 microstepping (EM=1, not 5)
   }
 
   async moveTo(x: number, y: number, speed: number): Promise<void> {
@@ -195,13 +194,21 @@ export class EBBBackend implements PlotBackend {
     }
   }
 
-  async disconnect(): Promise<void> {
-    // Force the servo to pen-up via S2. SP can be a no-op on this firmware
-    // when it thinks the pen is already up, so we bypass it.
+  /**
+   * Clean up pen + motor state without closing the transport. Use this when
+   * the transport is owned by the caller (e.g. a long-lived WebSerial port
+   * that will host multiple jobs).
+   */
+  async shutdown(): Promise<void> {
     await this.ebb.forceServoUp().catch(() => undefined)
     await sleep(300)
     this.penIsDown = false
     await this.ebb.disableMotors().catch(() => undefined)
+  }
+
+  /** Shutdown and close the underlying transport. */
+  async disconnect(): Promise<void> {
+    await this.shutdown()
     await this.ebb.close()
   }
 
@@ -383,12 +390,24 @@ export interface RunJobOptions {
 }
 
 export interface EbbPlotOptions extends RunJobOptions {
+  /** Node-only: path like /dev/cu.usbmodem14101. Ignored when `transport` is given. */
   port?: string
+  /**
+   * Pre-opened transport to use. If omitted (Node only), the function will
+   * construct a NodeSerialTransport from `port` or auto-detect.
+   */
+  transport?: EbbTransport
 }
 
 /**
  * Connect to an EBB device, execute a job, then disconnect.
- * EBB equivalent of axicli.ts runJob().
+ *
+ * For Node consumers: pass `port` (or leave unset for auto-detect) and this
+ * function will open a NodeSerialTransport for you.
+ *
+ * For browser / custom-transport consumers: pass `transport` directly (the
+ * function will NOT close a user-provided transport at the end; the caller
+ * owns its lifecycle).
  */
 export async function runJobEbb(
   job: Job,
@@ -396,10 +415,22 @@ export async function runJobEbb(
   options: EbbPlotOptions = {},
   signal?: AbortSignal,
 ): Promise<RunJobResult> {
-  const backend = new EBBBackend()
-  const port = options.port ?? process.env.NIB_PORT ?? ''
+  let transport: EbbTransport
+  let ownsTransport: boolean
+  if (options.transport) {
+    transport = options.transport
+    ownsTransport = false
+  } else {
+    // Node-only path — lazy-imported so the browser entry point doesn't pull
+    // in fs/stty code.
+    const { NodeSerialTransport } = await import('./node-serial.ts')
+    const port = options.port ?? (typeof process !== 'undefined' ? process.env.NIB_PORT : undefined) ?? undefined
+    transport = await NodeSerialTransport.connect(port)
+    ownsTransport = true
+  }
 
-  await backend.connect(port)
+  const backend = new EBBBackend(transport)
+  await backend.connect()
   try {
     return await backend.runJob(job, emitter, signal, {
       layer: options.layer,
@@ -408,7 +439,12 @@ export async function runJobEbb(
       envelope: options.envelope,
     })
   } finally {
-    await backend.disconnect()
+    if (ownsTransport) {
+      await backend.disconnect()
+    } else {
+      // User-owned transport — just clean up motors/pen, leave the port open.
+      await backend.shutdown()
+    }
   }
 }
 

@@ -23,6 +23,7 @@ import { createInterface } from 'readline'
 import chalk from 'chalk'
 import { resolveProfile } from '../core/config.ts'
 import { EBBBackend } from '../backends/ebb.ts'
+import { NodeSerialTransport } from '../backends/node-serial.ts'
 import { svgToMoves } from '../backends/svg-to-moves.ts'
 import { printError } from '../tui/output.ts'
 
@@ -45,11 +46,12 @@ export async function runLiveMode(source: string, options: LiveModeOptions = {})
   process.stderr.write(`\n  ${chalk.bold('nib live')} — ${chalk.cyan(source)}\n`)
   process.stderr.write(`  Profile: ${chalk.bold(profile.name)}  ·  waiting for paths…\n\n`)
 
-  const backend = new EBBBackend()
   const port = options.port ?? process.env.NIB_PORT ?? ''
-
+  let backend: EBBBackend
   try {
-    await backend.connect(port)
+    const transport = await NodeSerialTransport.connect(port || undefined)
+    backend = new EBBBackend(transport)
+    await backend.connect()
   } catch (err) {
     printError((err as Error).message)
     process.exit(1)

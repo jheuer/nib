@@ -39,9 +39,18 @@ export { PlotEmitter } from './core/events.ts'
 export type { PlotEvents } from './core/events.ts'
 
 export type { PlotBackend } from './backends/interface.ts'
+export type { EbbTransport } from './backends/transport.ts'
 export type { RunJobResult, PreviewStats } from './backends/types.ts'
 export { getSvgStats } from './backends/svg-stats.ts'
 export type { SvgStats } from './backends/svg-stats.ts'
+
+export {
+  EbbCommands,
+  lmRateReg, lmAccelReg, firmwareAtLeast,
+  SERVO_MIN, SERVO_MAX, STEPS_PER_MM, LM_TICK_HZ, LM_MIN_FIRMWARE,
+  SPEED_PENDOWN_MAX_MMS, SPEED_PENUP_MAX_MMS,
+  LM_SPEED_PENDOWN_MAX_MMS, LM_SPEED_PENUP_MAX_MMS, ACCEL_MAX_MMS2,
+} from './backends/ebb-protocol.ts'
 
 export { EBBBackend, runJobEbb } from './backends/ebb.ts'
 export type { EbbPlotOptions } from './backends/ebb.ts'

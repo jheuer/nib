@@ -14,7 +14,8 @@ import readline from 'readline'
 import chalk from 'chalk'
 import { getProfile, saveProfile, listProfiles } from '../core/config.ts'
 import type { Profile } from '../core/job.ts'
-import { EBBPort, findEbbPort, SERVO_MIN, SERVO_MAX } from '../backends/ebb-protocol.ts'
+import { EbbCommands, SERVO_MIN, SERVO_MAX } from '../backends/ebb-protocol.ts'
+import { connectEbb, findEbbPort } from '../backends/node-serial.ts'
 import { ok, printError } from '../tui/output.ts'
 import { isInteractive } from '../tui/env.ts'
 
@@ -84,8 +85,7 @@ export const calibrateCmd = defineCommand({
       process.exit(1)
     }
 
-    const ebb = new EBBPort()
-    await ebb.open(portPath)
+    const ebb = await connectEbb(portPath)
     await ebb.enableMotors(1, 1)
 
     // Safe-up position used during calibration (pen definitely clear of paper).
@@ -188,7 +188,7 @@ export const calibrateCmd = defineCommand({
  *     \n from the preceding waitForEnter call from immediately exiting the sweep.
  */
 async function sweep(
-  ebb: EBBPort,
+  ebb: EbbCommands,
   startPct: number,
   direction: 'down' | 'up',
 ): Promise<number | null> {
@@ -288,7 +288,7 @@ async function sweep(
  * servo on EBB v3+. Rate controls how fast the servo walks to the new value;
  * 16000 is ~smooth at 1% increments without being sluggish.
  */
-async function setServoPos(ebb: EBBPort, pct: number): Promise<void> {
+async function setServoPos(ebb: EbbCommands, pct: number): Promise<void> {
   const raw = servoRaw(pct)
   // S2 drives PWM directly — bypasses the SP,0/SP,1 state machine which
   // can ignore repeated SP commands on some firmware.

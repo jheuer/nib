@@ -10,7 +10,8 @@ import { jobCmd } from './job.ts'
 import { seriesCmd } from './series.ts'
 import { calibrateCmd } from './calibrate.ts'
 import { loadGlobalConfig, saveGlobalConfig, getProfile } from '../core/config.ts'
-import { EBBPort, findEbbPort, SPEED_PENUP_MAX_MMS } from '../backends/ebb-protocol.ts'
+import { SPEED_PENUP_MAX_MMS } from '../backends/ebb-protocol.ts'
+import { connectEbb, findEbbPort } from '../backends/node-serial.ts'
 import { writeProjectConfig } from '../core/config.ts'
 import { printError } from '../tui/output.ts'
 import { advanceArmState, resetArmState, markArmUnknown, loadArmState, formatPosition } from '../core/state.ts'
@@ -61,8 +62,7 @@ const penCmd = defineCommand({
     const killTimer = setTimeout(() => process.exit(0), 10_000)
     killTimer.unref()
 
-    const ebb = new EBBPort()
-    await ebb.open(portPath)
+    const ebb = await connectEbb(portPath)
     await ebb.configureServo(penPosUp, penPosDown)
 
     if (action === 'up') {
@@ -120,8 +120,7 @@ const moveCmd = defineCommand({
         )
         process.exit(1)
       }
-      const ebb = new EBBPort()
-      await ebb.open(portPath)
+      const ebb = await connectEbb(portPath)
       await ebb.penUp(200)
       await ebb.enableMotors(1, 1)
       if (Math.abs(state.x) > 0.01 || Math.abs(state.y) > 0.01) {
@@ -139,8 +138,7 @@ const moveCmd = defineCommand({
       process.exit(2)
     }
 
-    const ebb = new EBBPort()
-    await ebb.open(portPath)
+    const ebb = await connectEbb(portPath)
     await ebb.penUp(200)
     await ebb.enableMotors(1, 1)
     await ebb.move(xMm ?? 0, yMm ?? 0, MOVE_SPEED_MMS)
@@ -173,8 +171,7 @@ const motorsCmd = defineCommand({
     const killTimer = setTimeout(() => process.exit(0), 10_000)
     killTimer.unref()
 
-    const ebb = new EBBPort()
-    await ebb.open(portPath)
+    const ebb = await connectEbb(portPath)
     if (state === 'on') {
       await ebb.enableMotors(1, 1)
       // Enabling motors re-establishes origin at the current physical position.
@@ -214,8 +211,7 @@ const fwCmd = defineCommand({
     const killTimer = setTimeout(() => process.exit(0), 10_000)
     killTimer.unref()
 
-    const ebb = new EBBPort()
-    await ebb.open(port)
+    const ebb = await connectEbb(port)
     const v = await ebb.version()
     process.stdout.write(v + '\n')
     process.exit(0)
@@ -250,8 +246,7 @@ const homeCmd = defineCommand({
       process.exit(1)
     }
 
-    const ebb = new EBBPort()
-    await ebb.open(portPath)
+    const ebb = await connectEbb(portPath)
     await ebb.penUp(200)
     await ebb.enableMotors(1, 1)
     if (Math.abs(state.x) > 0.01 || Math.abs(state.y) > 0.01) {
@@ -310,8 +305,7 @@ const releaseCmd = defineCommand({
     const killTimer = setTimeout(() => process.exit(0), 10_000)
     killTimer.unref()
 
-    const ebb = new EBBPort()
-    await ebb.open(port)
+    const ebb = await connectEbb(port)
     await ebb.penUp()
     await ebb.disableMotors()
     // Freely-moving arm → tracked position is no longer reliable.

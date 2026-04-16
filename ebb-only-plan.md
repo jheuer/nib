@@ -112,6 +112,44 @@ Still to do:
 
 14. **`dry-run` output** — print planner summary: `N moves, M lifts, est Xm Ys, max speed Z mm/s`.
 
+## Phase 6 — Embeddable library (transport abstraction + WebSerial)
+
+Goal: make `nib` usable from an arbitrary Node program or a browser app over WebSerial / WebUSB, without the CLI's config-and-storage coupling.
+
+**Three-tier shape:**
+
+1. **Pure core** — already done. `svgToMoves`, `reorder`, `planMove`/`planStroke`, `previewStatsFromMoves`, envelope math, LM encoding. Zero I/O.
+2. **Transport abstraction** — new, this phase. `EbbTransport` interface: `write / readLine / close`. Two impls ship: `NodeSerialTransport` (current stty+fs code) and `WebSerialTransport` (browser).
+3. **Plot runner** — `runJob(job, transport, emitter, options)` — takes any transport, no config lookup.
+
+CLI storage (profiles.toml, state.toml, job history) stays Node-only, out of the core.
+
+### Phase 6a — Transport refactor (Node only, no browser yet)
+
+1. Add `src/backends/transport.ts` with `EbbTransport` interface.
+2. Extract the stty / fs.createReadStream / writeSync code from `EBBPort` into `src/backends/node-serial.ts` as `NodeSerialTransport implements EbbTransport`. Move `findEbbPort` into that file.
+3. Rename `EBBPort` → `EbbCommands` in `ebb-protocol.ts`. Constructor takes `EbbTransport`; `command()` / `send()` delegate to `transport.readLine` / `transport.write`. Protocol methods (`penUp`, `lm`, `configureServo`, etc.) stay.
+4. Update `EBBBackend` — accept `EbbCommands` (or a transport + construct internally). Drop the "open port from string" convenience.
+5. Update all CLI call sites (`pen`, `move`, `motors`, `home`, `fw`, `release`, `calibrate`, `live`).
+
+### Phase 6b — WebSerial transport + browser entry point
+
+6. Add `src/backends/web-serial.ts` — `WebSerialTransport implements EbbTransport` wrapping a WebSerial `SerialPort` object. Provide a helper that prompts `navigator.serial.requestPort()` with the EBB's USB VID/PID filter.
+7. Split `package.json` exports into `.` / `./core` / `./node` / `./browser` entry points.
+8. Add a browser smoke test (ideally hardware-in-the-loop with a real EBB plus Chrome/Edge).
+
+### Phase 6c — Public API polish
+
+9. Top-level `plot(svg, { transport, profile, optimize, onProgress })` API that wraps the pipeline.
+10. Typed event stream via `PlotEmitter` — `progress`, `pen:up`, `pen:down`, `abort`, `complete`, `layer:start`, `layer:complete`.
+11. README sections for Node / Web / pure-core consumers.
+
+### Tradeoff decisions (locked in)
+
+- Single package, multiple entry points (not three packages).
+- WebSerial over WebUSB — better API fit, same browser coverage for practical purposes.
+- Strict library: no `fs` in `nib/core` or `nib/browser`. CLI keeps all its storage helpers.
+
 ## Phase 5a — SVG layer label convention (done 2026-04-16)
 
 Matches the axicli Inkscape layer convention so SVGs exported from Inkscape with `1 outline` / `2 fills` / `!notes` labels work without an `axidraw.toml`.

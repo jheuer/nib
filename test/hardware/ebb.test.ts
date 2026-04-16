@@ -13,11 +13,8 @@
  * Layer 3 (XY motion) MOVES the carriage. Allow 20×20mm of clear space.
  */
 import { describe, it, expect, beforeAll, afterAll } from 'bun:test'
-import {
-  EBBPort,
-  findEbbPort,
-  SPEED_PENDOWN_MAX_MMS,
-} from '../../src/backends/ebb-protocol.ts'
+import { EbbCommands, SPEED_PENDOWN_MAX_MMS } from '../../src/backends/ebb-protocol.ts'
+import { connectEbb, findEbbPort } from '../../src/backends/node-serial.ts'
 
 const rawPort = process.env.NIB_PORT
 const skip = !rawPort
@@ -33,14 +30,13 @@ async function resolvePort(): Promise<string> {
 
 // ── Shared port — opened once for all EBB describes ──────────────────────────
 
-let ebb: EBBPort
+let ebb: EbbCommands
 let port: string
 
 beforeAll(async () => {
   if (skip) return
   port = await resolvePort()
-  ebb = new EBBPort()
-  await ebb.open(port)
+  ebb = await connectEbb(port)
 })
 
 afterAll(async () => {
