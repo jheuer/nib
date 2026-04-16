@@ -1,0 +1,4 @@
+# axidraw.toml — per-project config for nib
+# This file dogfoods the library itself.
+model = "A3"
+default_profile = "fineliner"

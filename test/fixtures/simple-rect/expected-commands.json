@@ -1,0 +1,11 @@
+{
+  "_comment": "Expected axicli flags for simple-rect/input.svg with default profile (speed_pendown=25, speed_penup=75, pen_pos_down=40, pen_pos_up=60, accel=75, reordering=0).",
+  "flags": [
+    "--speed_pendown", "25",
+    "--speed_penup",   "75",
+    "--pen_pos_down",  "40",
+    "--pen_pos_up",    "60",
+    "--accel",         "75",
+    "--reordering",    "0"
+  ]
+}

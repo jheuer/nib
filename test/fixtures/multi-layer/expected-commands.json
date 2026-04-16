@@ -1,0 +1,22 @@
+{
+  "_comment": "Expected axicli flags for multi-layer/input.svg. Layer IDs come from the group id attributes: layer1=1, layer2=2.",
+  "layerIds": [1, 2],
+  "flags_layer1": [
+    "--speed_pendown", "25",
+    "--speed_penup",   "75",
+    "--pen_pos_down",  "40",
+    "--pen_pos_up",    "60",
+    "--accel",         "75",
+    "--reordering",    "0",
+    "--layer",         "1"
+  ],
+  "flags_layer2": [
+    "--speed_pendown", "25",
+    "--speed_penup",   "75",
+    "--pen_pos_down",  "40",
+    "--pen_pos_up",    "60",
+    "--accel",         "75",
+    "--reordering",    "0",
+    "--layer",         "2"
+  ]
+}

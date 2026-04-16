@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 15 15" width="15mm" height="15mm">
+  <!-- Outer box: 15×15mm -->
+  <rect x="0.5" y="0.5" width="14" height="14" fill="none" stroke="black" stroke-width="0.3"/>
+  <!-- Center cross: horizontal bar -->
+  <line x1="5" y1="7.5" x2="10" y2="7.5" stroke="black" stroke-width="0.3"/>
+  <!-- Center cross: vertical bar -->
+  <line x1="7.5" y1="5" x2="7.5" y2="10" stroke="black" stroke-width="0.3"/>
+  <!-- Corner tick marks (1mm inset from corners, 2mm long) — useful for alignment checks -->
+  <!-- top-left horizontal -->
+  <line x1="0.5" y1="2.5" x2="2.5" y2="2.5" stroke="black" stroke-width="0.3"/>
+  <!-- top-left vertical -->
+  <line x1="2.5" y1="0.5" x2="2.5" y2="2.5" stroke="black" stroke-width="0.3"/>
+  <!-- top-right horizontal -->
+  <line x1="12.5" y1="2.5" x2="14.5" y2="2.5" stroke="black" stroke-width="0.3"/>
+  <!-- top-right vertical -->
+  <line x1="12.5" y1="0.5" x2="12.5" y2="2.5" stroke="black" stroke-width="0.3"/>
+  <!-- bottom-left horizontal -->
+  <line x1="0.5" y1="12.5" x2="2.5" y2="12.5" stroke="black" stroke-width="0.3"/>
+  <!-- bottom-left vertical -->
+  <line x1="2.5" y1="12.5" x2="2.5" y2="14.5" stroke="black" stroke-width="0.3"/>
+  <!-- bottom-right horizontal -->
+  <line x1="12.5" y1="12.5" x2="14.5" y2="12.5" stroke="black" stroke-width="0.3"/>
+  <!-- bottom-right vertical -->
+  <line x1="12.5" y1="12.5" x2="12.5" y2="14.5" stroke="black" stroke-width="0.3"/>
+</svg>
