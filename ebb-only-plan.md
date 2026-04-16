@@ -140,3 +140,36 @@ Hardware tests stay manual under `test/hardware/*.ts`.
 Phase 1 + 2 = minimum viable ship. Phase 1 alone is parity at painful speeds; Phase 2 is what makes people actually drop axicli. Phase 3 tightens quality; Phase 4 is cleanup.
 
 Rough budget: Phase 1 ≈ 2–3 focused days. Phase 2 ≈ 1 day on motion math + hardware session.
+
+---
+
+## Future considerations
+
+### Reference-diff against the Python axidraw library
+
+When to pick this up: *only* if Phase 5+ work touches motion math (LM speedups, new corner-smoothing scheme), or if a hardware anomaly looks like a step-math off-by-one. Right now plots land cleanly; ROI is low.
+
+What would go in a harness (build on demand):
+- Clone `github.com/evil-mad/axidraw` locally (memory: `reference_axidraw_codebase.md`).
+- Generate 4–5 canonical segments: long straight, 90° corner, flattened bezier arc, 180° reversal, zero-length move.
+- Run each through our `planStroke` / `planMove` and capture the emitted `(rate1Reg, steps1, accel1Reg, rate2Reg, steps2, accel2Reg)` tuples.
+- Run axicli `--preview --report_time` with the same input SVGs and parse the motion output for its corresponding rate/step/accel values.
+- `diff` the two. Within rounding on canonical cases = good. Large divergence = bug in one of:
+  - LM rate/accel register encoding (nib `lmRateReg` / `lmAccelReg`)
+  - CoreXY sign convention (`steps1 = (dX + dY)·80`)
+  - Trapezoid geometry (`planTrapezoid`)
+  - Junction velocity formula (Marlin deviation vs axicli's cornering-angle cap)
+
+Don't wire axicli in as a runtime comparator — that would reverse Phase 4. Use it as an external reference only.
+
+Canonical axidraw files to study if math looks off:
+- `axidraw/motion.py` — step math, LM generation, trapezoid planner, junction handling
+- `axidraw/axidraw_conf.py` — default constants (servo, step rates)
+- `axidraw/pyaxidraw/` — higher-level API wrapper
+
+### Other deferred items
+
+- `<use href="#...">` resolution in `svg-to-moves.ts` (needs one-level symbol-reference traversal).
+- `<text>` → paths conversion for plots with label text; currently text elements are silently ignored.
+- Time-based progress bar driven by planner duration (currently fraction of move count).
+- `tabtab`-style shell completions (citty doesn't auto-generate them).
