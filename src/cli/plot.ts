@@ -3,7 +3,9 @@ import { readFile } from 'fs/promises'
 import { existsSync } from 'fs'
 import { resolve } from 'path'
 import { homedir } from 'os'
-import { resolveProfile, loadProjectConfig, addProfileWear, penWearWarning, incrementSession } from '../core/config.ts'
+import { resolveProfile, loadProjectConfig, addProfileWear, penWearWarning, incrementSession, getMachineEnvelope } from '../core/config.ts'
+import { findFirstOutOfBounds } from '../core/envelope.ts'
+import { svgToMoves } from '../backends/svg-to-moves.ts'
 import { createJob } from '../core/job.ts'
 import { nextJobId, saveJob } from '../core/history.ts'
 import { PlotEmitter } from '../core/events.ts'
@@ -180,6 +182,26 @@ export const plotCmd = defineCommand({
       })
     }
 
+    // ── Pre-flight envelope check ────────────────────────────────────────────
+    // If the user has configured a machine model or envelope, walk the SVG
+    // moves and refuse to start if any point would drive the arm past its
+    // physical limit. Skipped when no envelope is configured.
+    {
+      const envelope = await getMachineEnvelope()
+      if (envelope) {
+        const moves = svgToMoves(processedSvg, { tolerance: 0.1 })
+        const offender = findFirstOutOfBounds(moves, envelope)
+        if (offender) {
+          printError(
+            `SVG exceeds machine envelope (${envelope.widthMm} × ${envelope.heightMm} mm)`,
+            `point (${offender.point.x.toFixed(1)}, ${offender.point.y.toFixed(1)}) is outside bounds — ` +
+            `re-scale the SVG, pick a larger model, or clear axidraw.toml's envelope to disable the check`,
+          )
+          process.exit(1)
+        }
+      }
+    }
+
     // ── Session tracking ──────────────────────────────────────────────────────
     let sessionNum: number | undefined
     if (args.session) {
@@ -315,8 +337,9 @@ export const plotCmd = defineCommand({
 
     try {
       const layerNum = args.layer !== undefined ? parseInt(args.layer, 10) : undefined
+      const envelope = (await getMachineEnvelope()) ?? undefined
       const result = backendName === 'ebb'
-        ? await runJobEbb(job, emitter, { port, layer: layerNum }, controller.signal)
+        ? await runJobEbb(job, emitter, { port, layer: layerNum, envelope }, controller.signal)
         : await runJob(job, emitter, {
             mode: 'plot',
             layer: layerNum,

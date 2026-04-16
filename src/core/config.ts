@@ -48,6 +48,8 @@ export async function saveGlobalConfig(config: GlobalConfig): Promise<void> {
 
 export interface ProjectConfig {
   model?: string
+  /** Override the machine envelope, e.g. "280x218". Takes precedence over `model`. */
+  envelope?: string
   defaultProfile?: string
   paper?: string
   layers?: LayerConfig[]
@@ -72,6 +74,7 @@ export async function loadProjectConfig(cwd = process.cwd()): Promise<ProjectCon
   const data = parse(raw) as Record<string, unknown>
   const config: ProjectConfig = {}
   if (data['model']) config.model = data['model'] as string
+  if (data['envelope']) config.envelope = data['envelope'] as string
   if (data['default_profile']) config.defaultProfile = data['default_profile'] as string
   if (data['paper']) config.paper = data['paper'] as string
   if (Array.isArray(data['layers'])) {
@@ -300,6 +303,35 @@ export async function resolveProfile(name?: string): Promise<ResolvedProfile> {
     penPosUp: 60,
     accel: 75,
   }
+}
+
+// ─── Machine envelope resolution ──────────────────────────────────────────────
+
+import { resolveEnvelope, parseEnvelope, type Envelope } from './envelope.ts'
+
+/**
+ * Resolve the machine envelope from any of:
+ *   - project.envelope (explicit "WxH" override)
+ *   - project.model (name like "V3A3")
+ *   - global.model (name)
+ * Returns null if nothing matches — bounds checks are a no-op in that case.
+ */
+export async function getMachineEnvelope(): Promise<Envelope | null> {
+  const project = await loadProjectConfig()
+  const global = await loadGlobalConfig()
+  if (project?.envelope) {
+    const parsed = parseEnvelope(project.envelope)
+    if (parsed) return parsed
+  }
+  if (project?.model) {
+    const e = resolveEnvelope(project.model)
+    if (e) return e
+  }
+  if (global.model) {
+    const e = resolveEnvelope(global.model)
+    if (e) return e
+  }
+  return null
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────

@@ -21,6 +21,7 @@ import {
 import { svgToMoves } from './svg-to-moves.ts'
 import { reorder, type OptimizeLevel } from '../core/reorder.ts'
 import { planMove, planStroke, optionsForProfile } from '../core/planner.ts'
+import { isInEnvelope, type Envelope } from '../core/envelope.ts'
 
 // ─── EBBBackend ───────────────────────────────────────────────────────────────
 
@@ -156,6 +157,26 @@ export class EBBBackend implements PlotBackend {
     this.currentY = last.y
   }
 
+  /**
+   * Lift pen, return home, and emit the abort event. Shared abort path so an
+   * envelope violation behaves the same as a SIGINT abort.
+   */
+  private async safeAbort(
+    emitter: PlotEmitter,
+    moveIdx: number, totalMoves: number,
+    copy: number, copies: number,
+    reason: string,
+  ): Promise<void> {
+    if (this.penIsDown) {
+      await this.ebb.penUp().catch(() => undefined)
+      this.penIsDown = false
+    }
+    await this.home().catch(() => undefined)
+    const fraction = (copy + moveIdx / totalMoves) / copies
+    process.stderr.write(`\n  ${reason}\n`)
+    emitter.emit('abort', fraction)
+  }
+
   /** Poll QM until motors are idle (FIFO drained). Gives up after 30s. */
   private async waitForMotorsIdle(): Promise<void> {
     const deadline = Date.now() + 30_000
@@ -193,6 +214,7 @@ export class EBBBackend implements PlotBackend {
     const startFrom = clamp01(options.startFrom ?? 0)
     const copies = Math.max(1, job.copies ?? 1)
     const pageDelayMs = Math.max(0, (options.pageDelayS ?? 0) * 1000)
+    const envelope = options.envelope ?? null
 
     await this.ebb.configureServo(profile.penPosUp, profile.penPosDown)
     await this.ebb.setServoTimeout(60_000)
@@ -238,6 +260,11 @@ export class EBBBackend implements PlotBackend {
         // Pen-up travel: single move, rest-to-rest. Just navigate to the next
         // position and advance the index.
         if (!move.penDown) {
+          if (!isInEnvelope(move.x, move.y, envelope)) {
+            await this.safeAbort(emitter, i, moves.length, copy, copies,
+              `envelope violation: travel target (${move.x.toFixed(1)}, ${move.y.toFixed(1)}) is outside machine bounds`)
+            return { stoppedAt: (copy + i / moves.length) / copies, aborted: true }
+          }
           if (this.penIsDown) {
             // Fast lift: pen continues rising to full up while we travel.
             // Saves ~140 ms per stroke transition vs waiting for full settle.
@@ -271,6 +298,18 @@ export class EBBBackend implements PlotBackend {
         }
 
         if (strokePoints.length < 2) continue
+
+        // Runtime envelope check — catches live mode, where the pre-flight
+        // static check didn't see these moves.
+        if (envelope) {
+          for (const p of strokePoints) {
+            if (!isInEnvelope(p.x, p.y, envelope)) {
+              await this.safeAbort(emitter, strokeStartIdx, moves.length, copy, copies,
+                `envelope violation: stroke point (${p.x.toFixed(1)}, ${p.y.toFixed(1)}) is outside machine bounds`)
+              return { stoppedAt: (copy + strokeStartIdx / moves.length) / copies, aborted: true }
+            }
+          }
+        }
 
         if (!this.penIsDown) {
           await this.ebb.penDown()
@@ -337,6 +376,8 @@ export interface RunJobOptions {
   startFrom?: number
   /** Delay between copies in seconds (for multi-copy jobs) */
   pageDelayS?: number
+  /** Machine envelope — target positions outside this rectangle abort the job. */
+  envelope?: Envelope
 }
 
 export interface EbbPlotOptions extends RunJobOptions {
@@ -362,6 +403,7 @@ export async function runJobEbb(
       layer: options.layer,
       startFrom: options.startFrom,
       pageDelayS: options.pageDelayS,
+      envelope: options.envelope,
     })
   } finally {
     await backend.disconnect()

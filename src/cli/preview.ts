@@ -7,7 +7,9 @@ import { writeFile } from 'fs/promises'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import chalk from 'chalk'
-import { resolveProfile, loadProjectConfig } from '../core/config.ts'
+import { resolveProfile, loadProjectConfig, getMachineEnvelope } from '../core/config.ts'
+import { findFirstOutOfBounds } from '../core/envelope.ts'
+import { svgToMoves } from '../backends/svg-to-moves.ts'
 import { createJob } from '../core/job.ts'
 import { runPreview, getSvgStats } from '../backends/axicli.ts'
 import { previewStatsFromSvg } from '../backends/ebb-preview.ts'
@@ -165,6 +167,22 @@ export const previewCmd = defineCommand({
     if (stats.fitsA4 !== null) fits.push(stats.fitsA4 ? chalk.green('A4 ✓') : chalk.dim('A4 ✗'))
     if (stats.fitsA3 !== null) fits.push(stats.fitsA3 ? chalk.green('A3 ✓') : chalk.dim('A3 ✗'))
     if (fits.length) rows.push(['Fits on', fits.join('  ')])
+
+    // Machine envelope (if configured) — the physical arm travel limit.
+    const envelope = await getMachineEnvelope()
+    if (envelope) {
+      const moves = svgToMoves(processedSvg, { tolerance: 0.1 })
+      const offender = findFirstOutOfBounds(moves, envelope)
+      const label = `${envelope.widthMm} × ${envelope.heightMm} mm`
+      if (offender) {
+        rows.push([
+          'Machine',
+          `${chalk.red('✗ exceeds ' + label)} ${chalk.dim(`(at ${offender.point.x.toFixed(1)}, ${offender.point.y.toFixed(1)})`)}`,
+        ])
+      } else {
+        rows.push(['Machine', `${chalk.green('✓ fits ' + label)}`])
+      }
+    }
 
     // Always show element count from SVG parsing
     rows.push(['Elements', chalk.dim(String(svgStats.pathCount))])
