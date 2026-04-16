@@ -226,7 +226,7 @@ async function showPreview(
   optimize: 0 | 1 | 2,
 ): Promise<void> {
   try {
-    const stats = previewStatsFromSvg(svg, profile)
+    const stats = previewStatsFromSvg(svg, profile, optimize)
     if (stats.estimatedS !== null) {
       process.stderr.write(`  ${chalk.dim('Est. time:')}    ${chalk.white(formatDuration(stats.estimatedS))}\n`)
     }

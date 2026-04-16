@@ -44,7 +44,7 @@ export function svgToMoves(svgContent: string, options: MovePlanOptions = {}): P
   const moves: PlannerMove[] = [{ x: 0, y: 0, penDown: false }]
 
   // ── Walk the SVG tree ──────────────────────────────────────────────────────
-  walkNode(root, IDENTITY, scale, tol, options.layer ?? null, moves)
+  walkNode(root, IDENTITY, INITIAL_STYLE, scale, tol, options.layer ?? null, moves)
 
   // Ensure we end pen-up
   if (moves.length > 0 && moves[moves.length - 1].penDown) {
@@ -155,9 +155,63 @@ interface SvgNode {
   children?: SvgNode[]
 }
 
+/**
+ * Computed style context inherited from ancestors. SVG's painting-and-visibility
+ * attributes cascade down the tree — a hidden <g> hides all its descendants.
+ * We only track the minimum set that affects what a plotter draws.
+ */
+interface StyleContext {
+  display: 'inline' | 'none'
+  visibility: 'visible' | 'hidden'
+  /** null = no stroke declared (defer to plot-if-drawable heuristic), 'none' = explicit skip */
+  stroke: string | null
+}
+
+const INITIAL_STYLE: StyleContext = { display: 'inline', visibility: 'visible', stroke: null }
+
+/**
+ * Parse relevant painting properties from an SVG element's own `style="..."`
+ * and presentation attributes, returning a merged context (child-over-parent).
+ */
+function mergeStyle(parent: StyleContext, attrs: Record<string, string>): StyleContext {
+  // Start by copying parent (inheritance)
+  const next: StyleContext = { ...parent }
+
+  // Inline style first so presentation attributes can override (SVG spec says
+  // presentation attributes have lower specificity than `style`; but in practice
+  // most authoring tools set one or the other — either order works for us).
+  const styleAttr = attrs['style']
+  if (styleAttr) {
+    for (const decl of styleAttr.split(';')) {
+      const [rawKey, ...rest] = decl.split(':')
+      const key = rawKey?.trim()
+      const val = rest.join(':').trim()
+      if (!key || !val) continue
+      if (key === 'display')    next.display    = val === 'none' ? 'none' : 'inline'
+      else if (key === 'visibility') next.visibility = val === 'hidden' ? 'hidden' : 'visible'
+      else if (key === 'stroke')     next.stroke     = val
+    }
+  }
+
+  // Presentation attributes
+  const dispAttr = attrs['display']
+  if (dispAttr === 'none') next.display = 'none'
+  else if (dispAttr)       next.display = 'inline'
+
+  const visAttr = attrs['visibility']
+  if (visAttr === 'hidden')  next.visibility = 'hidden'
+  else if (visAttr)          next.visibility = 'visible'
+
+  const strokeAttr = attrs['stroke']
+  if (strokeAttr) next.stroke = strokeAttr
+
+  return next
+}
+
 function walkNode(
   node: SvgNode,
   ctm: Matrix,        // current transform matrix
+  style: StyleContext,// inherited painting context
   scale: number,      // document scale: user-units → mm
   tol: number,        // flatness tolerance (mm)
   filterLayer: number | null,
@@ -168,6 +222,9 @@ function walkNode(
   const local = txAttr ? parseTransform(txAttr) : IDENTITY
   const m = multiplyMatrix(ctm, local)
 
+  // Merge this element's painting context into the inherited one
+  const merged = mergeStyle(style, node.attributes)
+
   // Layer filtering: if filterLayer is set, skip groups not on that layer
   const mode = node.attributes['inkscape:groupmode']
   const id   = node.attributes['id']
@@ -176,12 +233,18 @@ function walkNode(
     if (layerNum !== filterLayer) return  // skip this layer subtree
   }
 
-  // Skip invisible / non-plotting elements
-  const display = node.attributes['display']
-  const visibility = node.attributes['visibility']
-  if (display === 'none' || visibility === 'hidden') return
+  // Skip whole subtree if this element (or any ancestor) is non-displaying.
+  if (merged.display === 'none' || merged.visibility === 'hidden') return
 
+  // Skip elements that explicitly have no stroke — for a plotter, stroke:none
+  // means "not drawn". This matches how most SVG-to-plotter pipelines behave.
+  // Groups without a stroke are fine (children may declare their own).
   const name = node.name
+  const isLeaf = name === 'path' || name === 'line' || name === 'rect'
+              || name === 'circle' || name === 'ellipse'
+              || name === 'polyline' || name === 'polygon'
+  if (isLeaf && merged.stroke === 'none') return
+
   if (name === 'path') {
     const d = node.attributes['d']
     if (d) appendPathMoves(d, m, scale, tol, out)
@@ -200,7 +263,7 @@ function walkNode(
   }
 
   for (const child of node.children ?? []) {
-    walkNode(child as SvgNode, m, scale, tol, filterLayer, out)
+    walkNode(child as SvgNode, m, merged, scale, tol, filterLayer, out)
   }
 }
 

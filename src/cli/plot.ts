@@ -9,8 +9,11 @@ import { svgToMoves } from '../backends/svg-to-moves.ts'
 import { createJob } from '../core/job.ts'
 import { nextJobId, saveJob } from '../core/history.ts'
 import { PlotEmitter } from '../core/events.ts'
-import { runJob, jobToAxicliFlags, getSvgStats } from '../backends/axicli.ts'
+import { runJob, getSvgStats } from '../backends/axicli.ts'
 import { runJobEbb } from '../backends/ebb.ts'
+import { previewStatsFromSvg } from '../backends/ebb-preview.ts'
+import { LM_SPEED_PENDOWN_MAX_MMS } from '../backends/ebb-protocol.ts'
+import { formatDuration } from '../tui/output.ts'
 import { attachProgressBar } from '../tui/progress.ts'
 import { printPlotHeader, printPlotComplete, printError, printWarning } from '../tui/output.ts'
 import { promptLayer, promptPause } from '../tui/guided.ts'
@@ -259,8 +262,19 @@ export const plotCmd = defineCommand({
     printPlotHeader(job.file, profile, isDryRun)
 
     if (isDryRun) {
-      process.stderr.write('  Dry-run: job validated. Would invoke axicli with:\n')
-      process.stderr.write(`    ${['axicli', job.file ?? '<svg>', ...jobToAxicliFlags(job)].join(' ')}\n\n`)
+      // Planner-driven dry-run summary: run the same pipeline a real plot
+      // would (svgToMoves → reorder → planStroke/planMove), and report the
+      // stats the user cares about before committing paper and ink.
+      const stats = previewStatsFromSvg(cardSvg, profile, optimize)
+      const maxSpeedMms = (profile.speedPendown / 100) * LM_SPEED_PENDOWN_MAX_MMS
+      process.stderr.write('  Dry-run summary\n')
+      if (stats.pendownM !== null)  process.stderr.write(`    Pen-down:     ${stats.pendownM.toFixed(2)} m\n`)
+      if (stats.travelM !== null)   process.stderr.write(`    Travel:       ${stats.travelM.toFixed(2)} m\n`)
+      if (stats.penLifts !== null)  process.stderr.write(`    Pen lifts:    ${stats.penLifts}\n`)
+      if (stats.estimatedS !== null) process.stderr.write(`    Est. time:    ${formatDuration(stats.estimatedS)}\n`)
+      process.stderr.write(`    Max speed:    ${maxSpeedMms.toFixed(1)} mm/s pen-down\n`)
+      if (stats.boundingBoxMm)      process.stderr.write(`    Bounding box: ${stats.boundingBoxMm.width.toFixed(1)} × ${stats.boundingBoxMm.height.toFixed(1)} mm\n`)
+      process.stderr.write('\n')
       return
     }
 

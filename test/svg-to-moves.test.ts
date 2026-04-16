@@ -290,3 +290,81 @@ describe('fixture: multi-layer', () => {
     expect(size1).toBeGreaterThan(size2)
   })
 })
+
+// ─── Visibility + style inheritance ───────────────────────────────────────────
+
+describe('visibility', () => {
+  it('skips elements with display="none"', () => {
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100mm" height="100mm">
+      <line x1="0" y1="0" x2="50" y2="50"/>
+      <line x1="0" y1="0" x2="90" y2="90" display="none"/>
+    </svg>`
+    expect(penLifts(svgToMoves(svg))).toBe(1)
+  })
+
+  it('skips elements with visibility="hidden"', () => {
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100mm" height="100mm">
+      <line x1="0" y1="0" x2="50" y2="50"/>
+      <line x1="0" y1="0" x2="90" y2="90" visibility="hidden"/>
+    </svg>`
+    expect(penLifts(svgToMoves(svg))).toBe(1)
+  })
+
+  it('inherits display:none from ancestor group', () => {
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100mm" height="100mm">
+      <line x1="0" y1="0" x2="50" y2="50"/>
+      <g display="none">
+        <line x1="0" y1="0" x2="90" y2="90"/>
+        <line x1="10" y1="10" x2="20" y2="20"/>
+      </g>
+    </svg>`
+    expect(penLifts(svgToMoves(svg))).toBe(1)
+  })
+
+  it('inherits visibility:hidden via style attribute on ancestor', () => {
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100mm" height="100mm">
+      <line x1="0" y1="0" x2="50" y2="50"/>
+      <g style="visibility:hidden">
+        <line x1="0" y1="0" x2="90" y2="90"/>
+      </g>
+    </svg>`
+    expect(penLifts(svgToMoves(svg))).toBe(1)
+  })
+
+  it('skips elements with stroke="none"', () => {
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100mm" height="100mm">
+      <line x1="0" y1="0" x2="50" y2="50"/>
+      <line x1="0" y1="0" x2="90" y2="90" stroke="none"/>
+    </svg>`
+    expect(penLifts(svgToMoves(svg))).toBe(1)
+  })
+
+  it('skips elements with style="stroke:none"', () => {
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100mm" height="100mm">
+      <line x1="0" y1="0" x2="50" y2="50"/>
+      <line x1="0" y1="0" x2="90" y2="90" style="stroke:none"/>
+    </svg>`
+    expect(penLifts(svgToMoves(svg))).toBe(1)
+  })
+
+  it('child stroke="black" overrides ancestor stroke="none"', () => {
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100mm" height="100mm">
+      <g stroke="none">
+        <line x1="0" y1="0" x2="50" y2="50" stroke="black"/>
+      </g>
+    </svg>`
+    expect(penLifts(svgToMoves(svg))).toBe(1)
+  })
+
+  it('ancestor display="none" hides the whole subtree even if a child says inline', () => {
+    // Per SVG spec: display:none on an ancestor is absolute — descendants
+    // are not rendered regardless of their own display setting. We implement
+    // this by returning early from the subtree walk.
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100mm" height="100mm">
+      <g display="none">
+        <line x1="0" y1="0" x2="50" y2="50" display="inline"/>
+      </g>
+    </svg>`
+    expect(penLifts(svgToMoves(svg))).toBe(0)
+  })
+})

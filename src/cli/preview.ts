@@ -114,7 +114,7 @@ export const previewCmd = defineCommand({
       })
       // If axicli ran but produced no output (no plotter), augment with local stats
       if (stats.rawLines.length === 0) {
-        const local = previewStatsFromSvg(processedSvg, profile)
+        const local = previewStatsFromSvg(processedSvg, profile, job.optimize)
         stats = { ...local, rawLines: stats.rawLines }
         statsSource = 'local'
       }

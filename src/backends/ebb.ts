@@ -158,8 +158,14 @@ export class EBBBackend implements PlotBackend {
   }
 
   /**
-   * Lift pen, return home, and emit the abort event. Shared abort path so an
-   * envelope violation behaves the same as a SIGINT abort.
+   * Stop motors immediately, lift pen, and return home. Shared abort path used
+   * by SIGINT and envelope violations.
+   *
+   * Sends `ES` (emergency stop) FIRST so the EBB drops any LM/SM commands
+   * still in the FIFO and halts motion now, rather than making us wait ~seconds
+   * for queued moves to drain before we can react. After ES, we'd lose sync
+   * with the firmware's step counter — but nib's position tracking is
+   * software-side, so this doesn't matter here.
    */
   private async safeAbort(
     emitter: PlotEmitter,
@@ -167,6 +173,8 @@ export class EBBBackend implements PlotBackend {
     copy: number, copies: number,
     reason: string,
   ): Promise<void> {
+    await this.ebb.emergencyStop().catch(() => undefined)
+    await sleep(100)  // let the firmware process ES and settle
     if (this.penIsDown) {
       await this.ebb.penUp().catch(() => undefined)
       this.penIsDown = false
@@ -245,14 +253,8 @@ export class EBBBackend implements PlotBackend {
       let i = copy === 0 ? firstIdx : 0
       while (i < moves.length) {
         if (signal?.aborted) {
-          if (this.penIsDown) {
-            await this.ebb.penUp().catch(() => undefined)
-            this.penIsDown = false
-          }
-          await this.home()
-          const fraction = (copy + i / moves.length) / copies
-          emitter.emit('abort', fraction)
-          return { stoppedAt: fraction, aborted: true }
+          await this.safeAbort(emitter, i, moves.length, copy, copies, 'aborted')
+          return { stoppedAt: (copy + i / moves.length) / copies, aborted: true }
         }
 
         const move = moves[i]

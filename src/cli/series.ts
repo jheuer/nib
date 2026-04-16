@@ -271,7 +271,7 @@ export const seriesCmd = defineCommand({
       // ── Quick preview stats (best-effort) ────────────────────────────────────
       let previewLine = ''
       try {
-        const stats = previewStatsFromSvg(processedSvg, profile)
+        const stats = previewStatsFromSvg(processedSvg, profile, optimize)
         const parts: string[] = []
         if (stats.estimatedS !== null) parts.push(formatDuration(stats.estimatedS))
         if (stats.penLifts !== null)   parts.push(`${stats.penLifts} lifts`)

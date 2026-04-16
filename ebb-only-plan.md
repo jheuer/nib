@@ -81,7 +81,20 @@ Goal: `nib` offers a high-quality CLI experience for plotting SVGs over USB seri
 - Full `penUp` (220 ms settle) still used at end of copy, in `disconnect`, and in manual CLI commands — those don't benefit from overlapped servo travel.
 - FIFO batching across move boundaries (polling `QM` to keep commands queued) skipped for now — sleep-for-duration after each stroke matches actual wall clock, and the LM FIFO is already utilized within each stroke.
 
-## Phase 3 — SVG robustness & CLI polish
+## Phase 3 — Partially done (2026-04-16)
+
+Delivered:
+- **SVG visibility inheritance + style parsing** — `svg-to-moves.ts` now carries a `StyleContext` down the tree and merges presentation attributes + inline `style="..."`. `display:none`, `visibility:hidden`, `stroke:none` all work on ancestors. `+8 tests` in `svg-to-moves.test.ts`.
+- **Preview reorders before computing stats** — `previewStatsFromSvg(svg, profile, optimize)` now runs the same reorder the plot will use. Travel distance / pen lifts / ETA match what actually prints.
+- **Dry-run prints planner summary** — `nib plot --dry-run` outputs pen-down / travel / lift count / ETA / max speed / bounding box, driven by the same `previewStatsFromSvg` pipeline. No more misleading "would invoke axicli with..." message.
+- **ES-based SIGINT abort** — `safeAbort` fires `ES` first to drop queued FIFO commands and halt motion immediately, then pen-up and home. Same path is used by envelope violations and SIGINT.
+
+Still to do:
+- `<use href="#..."` resolution
+- `<text>` warning / `--text-as-paths` preprocess
+- Time-based progress bar
+
+## Phase 3 — SVG robustness & CLI polish (original scope)
 
 9. **SVG parsing gaps** in `svg-to-moves.ts`
    - Inheritable `display`/`visibility`/`style="display:none"` on ancestors.

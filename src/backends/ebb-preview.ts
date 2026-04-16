@@ -15,20 +15,30 @@ import type { PlannerMove } from './svg-to-moves.ts'
 import type { ResolvedProfile } from '../core/job.ts'
 import type { PreviewStats } from './axicli.ts'
 import { planMove, planStroke, optionsForProfile } from '../core/planner.ts'
+import { reorder, type OptimizeLevel } from '../core/reorder.ts'
 
 // ─── Public API ───────────────────────────────────────────────────────────────
 
 /**
  * Compute preview statistics from an SVG string + profile, without hardware.
+ *
+ * Applies the same reorder level the plot will use, so lift count / travel /
+ * ETA reflect what actually happens on paper — not the raw document order.
  */
-export function previewStatsFromSvg(svg: string, profile: ResolvedProfile): PreviewStats {
-  const moves = svgToMoves(svg, { tolerance: 0.05 })
+export function previewStatsFromSvg(
+  svg: string,
+  profile: ResolvedProfile,
+  optimize: OptimizeLevel = 0,
+): PreviewStats {
+  const raw = svgToMoves(svg, { tolerance: 0.05 })
+  const { moves } = reorder(raw, optimize)
   return previewStatsFromMoves(moves, profile)
 }
 
 /**
  * Compute preview statistics from a pre-computed move sequence.
- * Useful when you already have the moves (e.g. from a series preview).
+ * Useful when you already have the moves (e.g. from a series preview);
+ * caller is expected to have already reordered if they want optimization applied.
  */
 export function previewStatsFromMoves(moves: PlannerMove[], profile: ResolvedProfile): PreviewStats {
   let pendownM  = 0
