@@ -112,6 +112,20 @@ Still to do:
 
 14. **`dry-run` output** — print planner summary: `N moves, M lifts, est Xm Ys, max speed Z mm/s`.
 
+## Phase 5a — SVG layer label convention (done 2026-04-16)
+
+Matches the axicli Inkscape layer convention so SVGs exported from Inkscape with `1 outline` / `2 fills` / `!notes` labels work without an `axidraw.toml`.
+
+- `src/core/svg-layers.ts` — `parseSvgLayers(svg)` and `parseLayerAttrs(attrs)`. Leading integer in `inkscape:label` becomes the layer number; `!` prefix marks layer as skip; falls back to id digits for unnumbered labels.
+- `svgToMoves` now routes layer filtering and `!skip` through `parseLayerAttrs`, replacing the old id-digit scan.
+- `nib plot --list-layers` / `nib preview --list-layers` print the discovered layers with their number, name, and SKIP flag (`--json` on preview emits the same list machine-readably).
+- `nib plot --layer N` / `nib preview --layer N` match against the label-derived number first, with id fallback.
+- Guided mode (`nib plot --guided`) resolves layers in this order: `axidraw.toml [[layers]]` → SVG-label layers → id-scan.
+
+Tests: `test/svg-layers.test.ts` (12 pass). Full suite: 129.
+
+Future (Phase 5b, not yet built): `+pause`, `+HH:MM:SS` delay, `+speed{N}`, `+pos_down{N}`, `+pos_up{N}` per-layer overrides.
+
 ## Phase 4 — Axicli removed (done 2026-04-16)
 
 - `src/backends/axicli.ts` deleted. `test/axicli-flags.test.ts` deleted.

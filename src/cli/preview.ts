@@ -10,6 +10,7 @@ import chalk from 'chalk'
 import { resolveProfile, loadProjectConfig, getMachineEnvelope } from '../core/config.ts'
 import { findFirstOutOfBounds } from '../core/envelope.ts'
 import { svgToMoves } from '../backends/svg-to-moves.ts'
+import { parseSvgLayers } from '../core/svg-layers.ts'
 import { createJob } from '../core/job.ts'
 import { getSvgStats } from '../backends/svg-stats.ts'
 import { previewStatsFromSvg } from '../backends/ebb-preview.ts'
@@ -36,7 +37,12 @@ export const previewCmd = defineCommand({
     },
     layer: {
       type: 'string',
-      description: 'Preview a single layer by ID',
+      description: 'Preview a single layer (by number from inkscape:label prefix, or by id)',
+    },
+    'list-layers': {
+      type: 'boolean',
+      description: 'Print the discovered SVG layers and exit',
+      default: false,
     },
     open: {
       type: 'boolean',
@@ -71,6 +77,29 @@ export const previewCmd = defineCommand({
         process.exit(1)
       }
       svg = await readFile(resolved, 'utf-8')
+    }
+
+    // ── --list-layers: inspect + exit ────────────────────────────────────────
+    if (args['list-layers']) {
+      const layers = parseSvgLayers(svg)
+      if (args.json) {
+        process.stdout.write(JSON.stringify(layers, null, 2) + '\n')
+        return
+      }
+      if (layers.length === 0) {
+        process.stderr.write('  No Inkscape layers found.\n')
+        return
+      }
+      process.stderr.write(`\n  ${layers.length} layer${layers.length === 1 ? '' : 's'} found\n\n`)
+      const sorted = [...layers].sort((a, b) => a.id - b.id)
+      const idWidth = Math.max(...sorted.map(l => String(l.id).length), 2)
+      for (const l of sorted) {
+        const num = String(l.id).padStart(idWidth)
+        const flag = l.skip ? '  SKIP' : '      '
+        process.stderr.write(`    #${num}${flag}  ${l.name || '(unnamed)'}\n`)
+      }
+      process.stderr.write('\n')
+      return
     }
 
     // ── Fast local stats (no subprocess) ─────────────────────────────────────

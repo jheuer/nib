@@ -22,6 +22,7 @@ import { fireCompleteHook, fireAbortHook } from '../core/hooks.ts'
 import { appendPlotCard, buildPlotCardVars, DEFAULT_PLOT_CARD } from '../core/plot-card.ts'
 import { runLiveMode } from './live.ts'
 import { loadArmState, resetArmState, markArmUnknown, formatPosition } from '../core/state.ts'
+import { parseSvgLayers } from '../core/svg-layers.ts'
 import '../tui/env.ts'
 
 function expandPath(p: string): string {
@@ -43,7 +44,12 @@ export const plotCmd = defineCommand({
     },
     layer: {
       type: 'string',
-      description: 'Plot a single layer by ID',
+      description: 'Plot a single layer (by number from inkscape:label prefix, or by id)',
+    },
+    'list-layers': {
+      type: 'boolean',
+      description: 'Print the discovered SVG layers and exit without plotting',
+      default: false,
     },
     copies: {
       type: 'string',
@@ -123,6 +129,12 @@ export const plotCmd = defineCommand({
         process.exit(1)
       }
       svg = await readFile(resolved, 'utf-8')
+    }
+
+    // ── --list-layers: inspect + exit ────────────────────────────────────────
+    if (args['list-layers']) {
+      printLayerList(svg)
+      return
     }
 
     // ── Arm-position sanity check ─────────────────────────────────────────────
@@ -261,12 +273,22 @@ export const plotCmd = defineCommand({
 
     // ── Guided mode: walk layers one at a time ────────────────────────────────
     if (isGuided) {
-      const svgStats = await getSvgStats(processedSvg)
-
-      // Resolve layer list: prefer axidraw.toml, fall back to SVG layer IDs
-      const layers = (projectConfig?.layers?.length ?? 0) > 0
-        ? projectConfig!.layers!
-        : svgStats.layerIds.map(id => ({ id }))
+      // Resolve layer list in preference order:
+      //   1. axidraw.toml [[layers]] — most explicit
+      //   2. SVG labels (axicli convention) — self-describing, no config required
+      //   3. Fast id-scan as a last resort
+      let layers: Array<{ id: number; name?: string; profile?: string; prompt?: string; port?: string }>
+      if ((projectConfig?.layers?.length ?? 0) > 0) {
+        layers = projectConfig!.layers!
+      } else {
+        const svgLayers = parseSvgLayers(processedSvg).filter(l => !l.skip)
+        if (svgLayers.length > 0) {
+          layers = svgLayers.map(l => ({ id: l.id, name: l.name || undefined }))
+        } else {
+          const svgStats = await getSvgStats(processedSvg)
+          layers = svgStats.layerIds.map(id => ({ id }))
+        }
+      }
 
       if (layers.length === 0) {
         process.stderr.write('  No layers found — plotting without guided mode.\n\n')
@@ -430,4 +452,25 @@ async function doPlot(
   if (!result.aborted) {
     emitter.emit('complete', job.metrics)
   }
+}
+
+function printLayerList(svg: string): void {
+  const layers = parseSvgLayers(svg)
+  if (layers.length === 0) {
+    process.stderr.write('  No Inkscape layers found.\n')
+    process.stderr.write('  (All drawable elements will plot as a single layer.)\n')
+    return
+  }
+  process.stderr.write(`\n  ${layers.length} layer${layers.length === 1 ? '' : 's'} found\n\n`)
+  const sorted = [...layers].sort((a, b) => a.id - b.id)
+  const idWidth = Math.max(...sorted.map(l => String(l.id).length), 2)
+  for (const l of sorted) {
+    const num = String(l.id).padStart(idWidth)
+    const flag = l.skip ? '  SKIP' : '      '
+    const name = l.name || '(unnamed)'
+    process.stderr.write(`    #${num}${flag}  ${name}\n`)
+  }
+  process.stderr.write('\n')
+  process.stderr.write('  Plot one: nib plot <file> --layer <N>\n')
+  process.stderr.write('  Plot all: nib plot <file>  (layers marked SKIP are always omitted)\n\n')
 }

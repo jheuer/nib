@@ -11,6 +11,7 @@
 
 import { parseSync as parseSvg } from 'svgson'
 import { SVGPathData, SVGPathDataTransformer } from 'svg-pathdata'
+import { parseLayerAttrs } from '../core/svg-layers.ts'
 // SVGCommand is not re-exported from the top-level — import from the sub-path
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type SVGPathDataCommand = any
@@ -225,12 +226,16 @@ function walkNode(
   // Merge this element's painting context into the inherited one
   const merged = mergeStyle(style, node.attributes)
 
-  // Layer filtering: if filterLayer is set, skip groups not on that layer
-  const mode = node.attributes['inkscape:groupmode']
-  const id   = node.attributes['id']
-  if (mode === 'layer' && filterLayer !== null) {
-    const layerNum = parseInt(id?.replace(/\D/g, '') ?? '', 10)
-    if (layerNum !== filterLayer) return  // skip this layer subtree
+  // Layer handling (Inkscape convention). A group with inkscape:groupmode="layer"
+  // may encode a layer number and `!skip` prefix in its `inkscape:label`.
+  //   - If the label/id doesn't say this is a layer, fall through and process
+  //     as a normal group.
+  //   - If it IS a layer and has `!` prefix → never plot its subtree.
+  //   - If filterLayer is set → plot only the matching layer's subtree.
+  const layerInfo = parseLayerAttrs(node.attributes)
+  if (layerInfo) {
+    if (layerInfo.skip) return
+    if (filterLayer !== null && layerInfo.id !== filterLayer) return
   }
 
   // Skip whole subtree if this element (or any ancestor) is non-displaying.
