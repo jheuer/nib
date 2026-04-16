@@ -52,7 +52,7 @@ export interface JobMetrics {
 // ─── Job ─────────────────────────────────────────────────────────────────────
 
 export type JobStatus = 'pending' | 'running' | 'complete' | 'aborted'
-export type BackendName = 'axicli' | 'ebb'
+export type BackendName = 'ebb'
 
 export interface Job {
   id: number

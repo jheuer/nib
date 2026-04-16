@@ -11,7 +11,7 @@ import { resolveProfile, loadProjectConfig, getMachineEnvelope } from '../core/c
 import { findFirstOutOfBounds } from '../core/envelope.ts'
 import { svgToMoves } from '../backends/svg-to-moves.ts'
 import { createJob } from '../core/job.ts'
-import { runPreview, getSvgStats } from '../backends/axicli.ts'
+import { getSvgStats } from '../backends/svg-stats.ts'
 import { previewStatsFromSvg } from '../backends/ebb-preview.ts'
 import { printError, formatDuration, formatDistance } from '../tui/output.ts'
 import { applyPreprocessSteps } from '../core/preprocess.ts'
@@ -105,30 +105,8 @@ export const previewCmd = defineCommand({
     process.stderr.write(`\n  ${chalk.bold('nib preview')} — ${chalk.cyan(name)}\n`)
     process.stderr.write(`  ${chalk.dim('Profile:')}  ${profile.name} ${chalk.dim(`(${profile.speedPendown}% down · ${profile.speedPenup}% up)`)}\n\n`)
 
-    // ── Try axicli preview, fall back to local EBB stats ─────────────────────
-    let stats
-    let statsSource: 'axicli' | 'local' = 'axicli'
-    try {
-      stats = await runPreview(processedSvg, job, {
-        layer: args.layer !== undefined ? parseInt(args.layer, 10) : undefined,
-      })
-      // If axicli ran but produced no output (no plotter), augment with local stats
-      if (stats.rawLines.length === 0) {
-        const local = previewStatsFromSvg(processedSvg, profile, job.optimize)
-        stats = { ...local, rawLines: stats.rawLines }
-        statsSource = 'local'
-      }
-    } catch (err) {
-      const msg = (err as Error).message
-      if (msg.includes('axicli') || msg.includes('Failed to run')) {
-        // axicli not installed — compute entirely from SVG path analysis
-        stats = previewStatsFromSvg(processedSvg, profile)
-        statsSource = 'local'
-      } else {
-        printError(msg)
-        process.exit(1)
-      }
-    }
+    // ── Compute stats from the planner (no hardware, no subprocess) ─────────
+    const stats = previewStatsFromSvg(processedSvg, profile, job.optimize)
 
     if (args.json) {
       process.stdout.write(JSON.stringify({ ...stats, svgStats }, null, 2) + '\n')
@@ -187,15 +165,9 @@ export const previewCmd = defineCommand({
     // Always show element count from SVG parsing
     rows.push(['Elements', chalk.dim(String(svgStats.pathCount))])
 
-    // Show SVG dimensions from parsing when axicli had nothing to report
+    // Show SVG dimensions from parsing when planner had no bounding box
     if (!stats.boundingBoxMm && svgStats.widthMm && svgStats.heightMm) {
       rows.push(['Size (SVG)', chalk.dim(`${svgStats.widthMm} × ${svgStats.heightMm} mm`)])
-    }
-
-    if (statsSource === 'local') {
-      rows.push(['Stats source', chalk.dim('local (axicli not available)')])
-    } else if (stats.rawLines.length === 0) {
-      rows.push(['axicli stats', chalk.dim('(no output — plotter not connected?)')])
     }
 
     const labelWidth = Math.max(...rows.map(([l]) => l.length))
@@ -210,18 +182,6 @@ export const previewCmd = defineCommand({
     }
   },
 })
-
-function printBasicStats(stats: Awaited<ReturnType<typeof getSvgStats>>, json: boolean): void {
-  if (json) {
-    process.stdout.write(JSON.stringify(stats, null, 2) + '\n')
-    return
-  }
-  process.stderr.write(`  ${chalk.dim('Elements')}   ${stats.pathCount}\n`)
-  if (stats.widthMm && stats.heightMm) {
-    process.stderr.write(`  ${chalk.dim('Size')}       ${stats.widthMm} × ${stats.heightMm} mm\n`)
-  }
-  process.stderr.write('\n')
-}
 
 /** Generates a simple two-layer SVG (travel gray + pen-down black) and opens it */
 async function openBrowserPreview(svg: string, name: string): Promise<void> {

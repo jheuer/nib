@@ -1,7 +1,7 @@
 import readline from 'readline'
 import chalk from 'chalk'
 import type { Job, LayerConfig } from '../core/job.ts'
-import type { PreviewStats } from '../backends/axicli.ts'
+import type { PreviewStats } from '../backends/types.ts'
 import { formatDuration, formatDistance } from './output.ts'
 import { isInteractive } from './env.ts'
 

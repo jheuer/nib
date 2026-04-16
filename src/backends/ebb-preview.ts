@@ -13,7 +13,7 @@
 import { svgToMoves } from './svg-to-moves.ts'
 import type { PlannerMove } from './svg-to-moves.ts'
 import type { ResolvedProfile } from '../core/job.ts'
-import type { PreviewStats } from './axicli.ts'
+import type { PreviewStats } from './types.ts'
 import { planMove, planStroke, optionsForProfile } from '../core/planner.ts'
 import { reorder, type OptimizeLevel } from '../core/reorder.ts'
 

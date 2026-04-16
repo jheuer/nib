@@ -112,11 +112,15 @@ Still to do:
 
 14. **`dry-run` output** — print planner summary: `N moves, M lifts, est Xm Ys, max speed Z mm/s`.
 
-## Phase 4 — Remove axicli
+## Phase 4 — Axicli removed (done 2026-04-16)
 
-15. Delete `src/backends/axicli.ts`, `test/axicli-flags.test.ts`; remove from `src/index.ts` exports.
-16. Update README to drop `pip install axicli`.
-17. Keep `AxicliBackend` only as optional escape hatch, if at all.
+- `src/backends/axicli.ts` deleted. `test/axicli-flags.test.ts` deleted.
+- `RunJobResult` / `PreviewStats` moved to `src/backends/types.ts`.
+- `getSvgStats` / `SvgStats` moved to `src/backends/svg-stats.ts`.
+- `--backend axicli` flag removed from `nib plot` (no opt-in escape hatch; the EBB path has fully replaced it).
+- `BackendName` type narrowed to `'ebb'`.
+- `src/index.ts` exports rewritten: public API surface is now EBB-native.
+- 117 tests pass (was 129, -12 from the deleted axicli-flags test).
 
 ---
 

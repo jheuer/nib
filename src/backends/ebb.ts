@@ -12,7 +12,7 @@
 import type { PlotBackend } from './interface.ts'
 import type { Job, ResolvedProfile } from '../core/job.ts'
 import type { PlotEmitter } from '../core/events.ts'
-import type { RunJobResult } from './axicli.ts'
+import type { RunJobResult } from './types.ts'
 import {
   EBBPort, findEbbPort,
   SPEED_PENDOWN_MAX_MMS, SPEED_PENUP_MAX_MMS,

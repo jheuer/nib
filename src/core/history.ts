@@ -92,7 +92,7 @@ export async function loadJob(id: number): Promise<Job | null> {
       durationS: (raw['duration_s'] as number) ?? 0,
     },
     hooks: {},
-    backend: (raw['backend'] as 'axicli' | 'ebb') ?? 'axicli',
+    backend: 'ebb',
     seed: raw['seed'] as number | undefined,
     seriesId: raw['series_id'] as string | undefined,
     session: raw['session'] as number | undefined,

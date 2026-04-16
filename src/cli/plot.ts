@@ -9,7 +9,7 @@ import { svgToMoves } from '../backends/svg-to-moves.ts'
 import { createJob } from '../core/job.ts'
 import { nextJobId, saveJob } from '../core/history.ts'
 import { PlotEmitter } from '../core/events.ts'
-import { runJob, getSvgStats } from '../backends/axicli.ts'
+import { getSvgStats } from '../backends/svg-stats.ts'
 import { runJobEbb } from '../backends/ebb.ts'
 import { previewStatsFromSvg } from '../backends/ebb-preview.ts'
 import { LM_SPEED_PENDOWN_MAX_MMS } from '../backends/ebb-protocol.ts'
@@ -75,14 +75,9 @@ export const plotCmd = defineCommand({
       description: 'Skip confirmations (for scripts and CI)',
       default: false,
     },
-    backend: {
-      type: 'string',
-      description: 'Plot backend: ebb (default, native serial) or axicli (legacy Python subprocess)',
-      default: 'ebb',
-    },
     live: {
       type: 'boolean',
-      description: 'Live mode: read SVG paths from a subprocess stdout and plot as they arrive (requires --backend ebb)',
+      description: 'Live mode: read SVG paths from a subprocess stdout and plot as they arrive',
       default: false,
     },
     session: {
@@ -107,21 +102,8 @@ export const plotCmd = defineCommand({
       process.exit(2)
     }
 
-    const backendName = args.backend as 'axicli' | 'ebb'
-    if (!['axicli', 'ebb'].includes(backendName)) {
-      printError(`--backend must be axicli or ebb (got: ${args.backend})`)
-      process.exit(2)
-    }
-    if (backendName === 'axicli') {
-      printWarning('--backend axicli is deprecated and will be removed; ebb is the default')
-    }
-
-    // ── Live mode (requires ebb backend) ─────────────────────────────────────
+    // ── Live mode: stream SVG paths from a subprocess ────────────────────────
     if (args.live) {
-      if (backendName !== 'ebb') {
-        printError('--live requires --backend ebb (axicli cannot stream paths in real time)')
-        process.exit(2)
-      }
       await runLiveMode(args.file, { port, profile: profileName })
       return
     }
@@ -217,7 +199,7 @@ export const plotCmd = defineCommand({
     }
 
     // ── Pen wear check ────────────────────────────────────────────────────────
-    // (We don't know exact distance until axicli runs, so warn based on history)
+    // We don't know exact distance until the plot runs, so warn from history.
     const warnMsg = await penWearWarning(profile.name, 0)
     if (warnMsg) printWarning(warnMsg)
 
@@ -255,7 +237,6 @@ export const plotCmd = defineCommand({
       optimize,
       guided: isGuided,
       hooks: projectConfig?.hooks ?? {},
-      backend: backendName,
       session: sessionNum,
     })
 
@@ -352,21 +333,18 @@ export const plotCmd = defineCommand({
     try {
       const layerNum = args.layer !== undefined ? parseInt(args.layer, 10) : undefined
       const envelope = (await getMachineEnvelope()) ?? undefined
-      const result = backendName === 'ebb'
-        ? await runJobEbb(job, emitter, { port, layer: layerNum, envelope }, controller.signal)
-        : await runJob(job, emitter, {
-            mode: 'plot',
-            layer: layerNum,
-            port,
-          }, controller.signal)
+      const result = await runJobEbb(
+        job, emitter,
+        { port, layer: layerNum, envelope },
+        controller.signal,
+      )
 
       if (result.aborted) {
         // Paused — ask what to do
         const choice = await promptPause(result.stoppedAt)
 
         if (choice === 'resume') {
-          // Re-run the full job (axicli doesn't support mid-job resume)
-          process.stderr.write('  Resuming from the beginning of this layer…\n')
+          process.stderr.write(`  Resuming from ${Math.round(result.stoppedAt * 100)}%…\n`)
           controller.abort()  // reset, re-run
           job.status = 'pending'
           // Recurse: re-invoke the runner without the pause handler
@@ -400,7 +378,7 @@ export const plotCmd = defineCommand({
       const msg = (err as Error).message
       job.status = 'aborted'
       emitter.emit('abort', 0)
-      printError(msg, msg.includes('axicli') ? 'install with: pip install axicli' : undefined)
+      printError(msg)
       // Exception mid-plot — we don't know how far the arm got. Flag unknown
       // so the next plot requires the user to re-home first.
       await markArmUnknown()
@@ -434,7 +412,7 @@ async function plotSingleLayer(
   emitter.emit('layer:start', { id: layerId }, layerIndex, totalLayers)
 
   try {
-    await runJob(job, emitter, { layer: layerId, port })
+    await runJobEbb(job, emitter, { layer: layerId, port })
     emitter.emit('layer:complete', { id: layerId }, {})
   } catch (err) {
     printError((err as Error).message)
@@ -446,10 +424,9 @@ async function doPlot(
   job: ReturnType<typeof createJob>,
   emitter: PlotEmitter,
   port: string | undefined,
-  _fromFraction: number,
+  fromFraction: number,
 ): Promise<void> {
-  // axicli doesn't support fractional resume; re-run from the start
-  const result = await runJob(job, emitter, { port })
+  const result = await runJobEbb(job, emitter, { port, startFrom: fromFraction })
   if (!result.aborted) {
     emitter.emit('complete', job.metrics)
   }
