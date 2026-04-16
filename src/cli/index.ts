@@ -10,9 +10,10 @@ import { jobCmd } from './job.ts'
 import { seriesCmd } from './series.ts'
 import { calibrateCmd } from './calibrate.ts'
 import { loadGlobalConfig, saveGlobalConfig, getProfile } from '../core/config.ts'
-import { EBBPort, findEbbPort } from '../backends/ebb-protocol.ts'
+import { EBBPort, findEbbPort, SPEED_PENUP_MAX_MMS } from '../backends/ebb-protocol.ts'
 import { writeProjectConfig } from '../core/config.ts'
 import { printError } from '../tui/output.ts'
+import { advanceArmState, resetArmState, markArmUnknown, loadArmState, formatPosition } from '../core/state.ts'
 
 // ─── pen ──────────────────────────────────────────────────────────────────────
 
@@ -108,10 +109,26 @@ const moveCmd = defineCommand({
     killTimer.unref()
 
     if (args.home) {
+      // Walk back to tracked origin in software, not via firmware HM — that
+      // command returns to "position when EM was last issued", which isn't
+      // the origin we care about if other commands have moved the arm since.
+      const state = await loadArmState()
+      if (state.unknown) {
+        printError(
+          'arm position is unknown — I don\'t know where to home to',
+          're-enable motors with the arm parked at your intended origin: nib motors on',
+        )
+        process.exit(1)
+      }
       const ebb = new EBBPort()
       await ebb.open(portPath)
       await ebb.penUp(200)
-      await ebb.homeMove()
+      await ebb.enableMotors(1, 1)
+      if (Math.abs(state.x) > 0.01 || Math.abs(state.y) > 0.01) {
+        await ebb.move(-state.x, -state.y, MOVE_SPEED_MMS)
+      }
+      await resetArmState()
+      process.stderr.write(`  Home → (0, 0)\n`)
       process.exit(0)
     }
 
@@ -127,6 +144,7 @@ const moveCmd = defineCommand({
     await ebb.penUp(200)
     await ebb.enableMotors(1, 1)
     await ebb.move(xMm ?? 0, yMm ?? 0, MOVE_SPEED_MMS)
+    await advanceArmState(xMm ?? 0, yMm ?? 0)
     process.exit(0)
   },
 })
@@ -157,8 +175,17 @@ const motorsCmd = defineCommand({
 
     const ebb = new EBBPort()
     await ebb.open(portPath)
-    if (state === 'on') await ebb.enableMotors(1, 1)
-    else                await ebb.disableMotors()
+    if (state === 'on') {
+      await ebb.enableMotors(1, 1)
+      // Enabling motors re-establishes origin at the current physical position.
+      await resetArmState()
+    } else {
+      await ebb.disableMotors()
+      // User is about to push the arm around by hand — we can no longer trust
+      // the tracked position. Flag as unknown; `nib plot` will prompt before
+      // trusting it.
+      await markArmUnknown()
+    }
     process.stderr.write(`  motors ${state}\n`)
     process.exit(0)
   },
@@ -195,6 +222,70 @@ const fwCmd = defineCommand({
   },
 })
 
+// ─── home ────────────────────────────────────────────────────────────────────
+// Explicit alias for `nib move --home`. Walks the arm back to tracked origin
+// using software position state; resets state afterwards.
+
+const homeCmd = defineCommand({
+  meta: { name: 'home', description: 'Return the arm to the tracked origin (0,0)' },
+  args: {
+    port: { type: 'string', description: 'Serial port override (env: NIB_PORT)' },
+  },
+  async run({ args }) {
+    const rawPort = args.port ?? process.env.NIB_PORT
+    const portPath = rawPort || await findEbbPort()
+    if (!portPath) {
+      printError('No EBB device found — is the AxiDraw connected?')
+      process.exit(1)
+    }
+    const killTimer = setTimeout(() => process.exit(0), 15_000)
+    killTimer.unref()
+
+    const state = await loadArmState()
+    if (state.unknown) {
+      printError(
+        'arm position is unknown',
+        're-enable motors with the arm parked at your intended origin: nib motors on',
+      )
+      process.exit(1)
+    }
+
+    const ebb = new EBBPort()
+    await ebb.open(portPath)
+    await ebb.penUp(200)
+    await ebb.enableMotors(1, 1)
+    if (Math.abs(state.x) > 0.01 || Math.abs(state.y) > 0.01) {
+      await ebb.move(-state.x, -state.y, MOVE_SPEED_MMS)
+    }
+    await resetArmState()
+    process.stderr.write(`  Home → (0, 0)\n`)
+    process.exit(0)
+  },
+})
+
+// ─── position ────────────────────────────────────────────────────────────────
+
+const positionCmd = defineCommand({
+  meta: { name: 'position', description: 'Show the tracked arm position' },
+  args: {
+    json: { type: 'boolean', description: 'Output as JSON', default: false },
+  },
+  async run({ args }) {
+    const state = await loadArmState()
+    if (args.json) {
+      process.stdout.write(JSON.stringify(state, null, 2) + '\n')
+      return
+    }
+    process.stderr.write(`  Position:  ${formatPosition(state)}\n`)
+    if (state.updatedAt) {
+      process.stderr.write(`  Updated:   ${state.updatedAt}\n`)
+    }
+    if (state.unknown) {
+      process.stderr.write(`  Run:  nib motors on  with the arm at your chosen origin\n`)
+    }
+  },
+})
+
 // ─── release ─────────────────────────────────────────────────────────────────
 
 const releaseCmd = defineCommand({
@@ -223,6 +314,8 @@ const releaseCmd = defineCommand({
     await ebb.open(port)
     await ebb.penUp()
     await ebb.disableMotors()
+    // Freely-moving arm → tracked position is no longer reliable.
+    await markArmUnknown()
     process.stderr.write('  Motors released — arm moves freely\n')
     process.exit(0)
   },
@@ -298,7 +391,9 @@ const main = defineCommand({
     calibrate: calibrateCmd,
     pen: penCmd,
     move: moveCmd,
+    home: homeCmd,
     motors: motorsCmd,
+    position: positionCmd,
     release: releaseCmd,
     fw: fwCmd,
     config: configCmd,

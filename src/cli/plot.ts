@@ -16,6 +16,7 @@ import { applyPreprocessSteps, parsePaperSize } from '../core/preprocess.ts'
 import { fireCompleteHook, fireAbortHook } from '../core/hooks.ts'
 import { appendPlotCard, buildPlotCardVars, DEFAULT_PLOT_CARD } from '../core/plot-card.ts'
 import { runLiveMode } from './live.ts'
+import { loadArmState, resetArmState, markArmUnknown, formatPosition } from '../core/state.ts'
 import '../tui/env.ts'
 
 function expandPath(p: string): string {
@@ -135,6 +136,28 @@ export const plotCmd = defineCommand({
         process.exit(1)
       }
       svg = await readFile(resolved, 'utf-8')
+    }
+
+    // ── Arm-position sanity check ─────────────────────────────────────────────
+    // Each nib process resets currentX/Y to 0 in software. If a prior command
+    // left the arm elsewhere (or the user released motors), the physical arm
+    // isn't at origin — but we'll assume it is. Warn before that goes wrong.
+    {
+      const state = await loadArmState()
+      const atOrigin = !state.unknown && Math.abs(state.x) < 0.01 && Math.abs(state.y) < 0.01
+      if (!atOrigin && !args.yes) {
+        if (state.unknown) {
+          printWarning('arm position is unknown — last command released motors')
+        } else {
+          printWarning(`arm was last left at ${formatPosition(state)}`)
+        }
+        process.stderr.write('  Run `nib home` to return to origin, `nib motors on` to set a new origin,\n')
+        process.stderr.write('  or pass --yes to plot from the current position as if it were (0,0).\n\n')
+        process.exit(1)
+      }
+      // If we're proceeding, clear the state: the EBBBackend will home at end
+      // of plot so (0,0) is the correct post-plot position.
+      if (!atOrigin) await resetArmState()
     }
 
     // ── Resolve profile + config ──────────────────────────────────────────────
@@ -316,6 +339,8 @@ export const plotCmd = defineCommand({
           job.stoppedAt = result.stoppedAt
           process.stderr.write(`  Job #${id} saved (aborted at ${Math.round(result.stoppedAt * 100)}%).\n\n`)
         }
+        // Aborted mid-plot — the backend homes on abort so the arm is at (0,0).
+        await resetArmState()
         return
       }
 
@@ -325,6 +350,8 @@ export const plotCmd = defineCommand({
       job.metrics.durationS = durationS
       emitter.emit('complete', job.metrics)
       printPlotComplete(durationS, job.metrics, id)
+      // Backend homes at end of every copy — arm is at origin.
+      await resetArmState()
       await addProfileWear(profile.name, job.metrics.pendownM)
       await fireCompleteHook(job.hooks, {
         file: job.file,
@@ -337,6 +364,9 @@ export const plotCmd = defineCommand({
       job.status = 'aborted'
       emitter.emit('abort', 0)
       printError(msg, msg.includes('axicli') ? 'install with: pip install axicli' : undefined)
+      // Exception mid-plot — we don't know how far the arm got. Flag unknown
+      // so the next plot requires the user to re-home first.
+      await markArmUnknown()
       await fireAbortHook(job.hooks, { file: job.file, profile: profile.name, job_id: id })
       process.exitCode = 1
     } finally {
