@@ -14,6 +14,7 @@ import { svgToMoves } from './svg-to-moves.ts'
 import type { PlannerMove } from './svg-to-moves.ts'
 import type { ResolvedProfile } from '../core/job.ts'
 import type { PreviewStats } from './axicli.ts'
+import { planMove, planStroke, optionsForProfile } from '../core/planner.ts'
 
 // ─── Public API ───────────────────────────────────────────────────────────────
 
@@ -33,35 +34,66 @@ export function previewStatsFromMoves(moves: PlannerMove[], profile: ResolvedPro
   let pendownM  = 0
   let travelM   = 0
   let penLifts  = 0
-  let prevPenDown = false
+  let motionS   = 0
 
   let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
 
-  for (let i = 1; i < moves.length; i++) {
-    const prev = moves[i - 1]
-    const cur  = moves[i]
-    const dx   = cur.x - prev.x
-    const dy   = cur.y - prev.y
-    const dist = Math.sqrt(dx * dx + dy * dy) / 1000   // mm → m
+  // Walk moves, grouping pen-down runs into strokes (matching EBBBackend.runJob).
+  // For each stroke/travel, we call the actual motion planner and sum durations
+  // so the ETA matches what will happen on hardware (trapezoid + junction speeds
+  // + rest-to-rest between strokes), not a naive distance/speed quotient.
+  const penDownOpts = optionsForProfile(profile, true)
+  const penUpOpts   = optionsForProfile(profile, false)
 
-    if (cur.penDown) {
-      pendownM += dist
-      minX = Math.min(minX, cur.x, prev.x)
-      minY = Math.min(minY, cur.y, prev.y)
-      maxX = Math.max(maxX, cur.x, prev.x)
-      maxY = Math.max(maxY, cur.y, prev.y)
-    } else {
-      travelM += dist
+  let i = 0
+  let curX = moves.length > 0 ? moves[0].x : 0
+  let curY = moves.length > 0 ? moves[0].y : 0
+  while (i < moves.length) {
+    const m = moves[i]
+    if (!m.penDown) {
+      const dx = m.x - curX
+      const dy = m.y - curY
+      const dist = Math.hypot(dx, dy)
+      if (dist > 0.001) {
+        travelM += dist / 1000
+        motionS += planMove(dx, dy, 0, 0, penUpOpts).durationS
+      }
+      curX = m.x; curY = m.y
+      i++
+      continue
     }
-
-    if (!prevPenDown && cur.penDown) penLifts++
-    prevPenDown = cur.penDown
+    // Pen-down stroke: gather consecutive pen-down points
+    const pts: { x: number; y: number }[] = [{ x: curX, y: curY }]
+    while (i < moves.length && moves[i].penDown) {
+      pts.push({ x: moves[i].x, y: moves[i].y })
+      // Bounding box is computed from pen-down moves only
+      minX = Math.min(minX, moves[i].x); maxX = Math.max(maxX, moves[i].x)
+      minY = Math.min(minY, moves[i].y); maxY = Math.max(maxY, moves[i].y)
+      i++
+    }
+    if (pts.length < 2) continue
+    penLifts++
+    // Stroke distance
+    for (let k = 1; k < pts.length; k++) {
+      pendownM += Math.hypot(pts[k].x - pts[k - 1].x, pts[k].y - pts[k - 1].y) / 1000
+    }
+    // Stroke duration via the real planner (junction velocities)
+    for (const pm of planStroke(pts, penDownOpts)) {
+      motionS += pm.durationS
+    }
+    curX = pts[pts.length - 1].x
+    curY = pts[pts.length - 1].y
   }
+
+  // Pen transition overhead per stroke: ~80 ms for penUpFast (overlaps with
+  // travel), ~270 ms for penDown full settle (blocks before stroke starts).
+  // Call it 350 ms / stroke.
+  const penTransitionS = penLifts * 0.35
 
   const totalM = pendownM + travelM
   const travelOverheadPct = totalM > 0 ? Math.round((travelM / totalM) * 100) : null
 
-  const estimatedS = estimateDuration(pendownM, travelM, profile)
+  const estimatedS = motionS + penTransitionS
 
   const boundingBoxMm = (isFinite(minX) && isFinite(minY))
     ? { width: maxX - minX, height: maxY - minY }
@@ -85,26 +117,6 @@ export function previewStatsFromMoves(moves: PlannerMove[], profile: ResolvedPro
     fitsA3,
     rawLines: [],   // no subprocess output
   }
-}
-
-// ─── Duration estimate ────────────────────────────────────────────────────────
-
-import { SPEED_PENDOWN_MAX_MMS, SPEED_PENUP_MAX_MMS } from './ebb-protocol.ts'
-
-/**
- * Estimate total plot duration from pen-down/travel distances and profile speeds.
- * Returns seconds. Does not account for acceleration ramps (conservative — real
- * time is usually 5–15% shorter once motors are at speed).
- */
-function estimateDuration(pendownM: number, travelM: number, profile: ResolvedProfile): number {
-  const speedDown = (profile.speedPendown / 100) * SPEED_PENDOWN_MAX_MMS   // mm/s
-  const speedUp   = (profile.speedPenup   / 100) * SPEED_PENUP_MAX_MMS    // mm/s
-
-  if (speedDown <= 0 || speedUp <= 0) return 0
-
-  const pendownS = (pendownM * 1000) / speedDown   // m → mm, then ÷ mm/s
-  const travelS  = (travelM  * 1000) / speedUp
-  return pendownS + travelS
 }
 
 function roundM(m: number): number {

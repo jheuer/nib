@@ -62,18 +62,18 @@ Goal: `nib` offers a high-quality CLI experience for plotting SVGs over USB seri
 - `EBBBackend.connect` auto-detects firmware; ≥ 2.7 enables LM path. Older firmware falls back to SM cleanly.
 - Rest-to-rest per move (no junction look-ahead yet). Hardware not yet run against LM — needs a test plot to confirm the direction-sign / CoreXY translation is correct under acceleration.
 
-### Phase 2b — Junction velocities (next)
+### Phase 2b — Junction velocities (done 2026-04-16)
 
-5. **Motion planner** `src/core/planner.ts`
-   - Forward-backward pass over the stroke-level move list.
-   - Input: junction angle (between successive pen-down segments) + profile accel → `vJunction`.
-   - Output: each move gets a non-zero `vEntry`/`vExit` where safe, eliminating full stop-start between connected strokes.
+- `planStroke(points, options)` in `core/planner.ts` — forward + backward pass using Marlin's junction-deviation formula. Straight-line junctions → vMax, 90° corners → `sqrt(accel · d_junction · (1 + cos θ) / (1 - cos θ))`, reversals → 0. Tests in `test/planner.test.ts`.
+- `EBBBackend.runJob` groups consecutive pen-down moves into strokes and calls `runStroke`, which queues all LM phases of all segments back-to-back (FIFO pipelined) and sleeps once at the end for the total stroke duration. Pen-up travels remain single rest-to-rest moves.
+- Net effect: connected strokes (especially flattened beziers) now cruise through internal junctions instead of stopping at every segment boundary. Real plotting throughput jumps noticeably.
 
-6. **Preview parity** — feed the junction-aware planner's durations into `previewStatsFromMoves` so ETA matches wall-clock within ~5%.
+### Phase 2c — Preview parity + transition tuning (done 2026-04-16)
 
-### Phase 2c — FIFO batching
-
-7. Push 4–8 LM commands into the EBB FIFO; poll `QM` to keep it topped up instead of `sleep(durationMs)`-between-phases.
+- `previewStatsFromMoves` now walks strokes through `planStroke` and pen-up travel through `planMove`, summing per-phase durations plus a fixed per-lift transition cost (~0.35 s). ETA reflects trapezoid acceleration + junction speeds, not a naive distance/speed quotient.
+- `EBBPort.penUpFast(clearMs=80)` — pen up for plot transitions. Sleeps only long enough for the pen to clear paper; servo continues rising in the background while the next travel move runs. Saves ~140 ms per stroke transition vs full settle. Used in `runJob`'s pen-up branch.
+- Full `penUp` (220 ms settle) still used at end of copy, in `disconnect`, and in manual CLI commands — those don't benefit from overlapped servo travel.
+- FIFO batching across move boundaries (polling `QM` to keep commands queued) skipped for now — sleep-for-duration after each stroke matches actual wall clock, and the LM FIFO is already utilized within each stroke.
 
 ## Phase 3 — SVG robustness & CLI polish
 

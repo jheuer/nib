@@ -20,7 +20,7 @@ import {
 } from './ebb-protocol.ts'
 import { svgToMoves } from './svg-to-moves.ts'
 import { reorder, type OptimizeLevel } from '../core/reorder.ts'
-import { planMove, optionsForProfile } from '../core/planner.ts'
+import { planMove, planStroke, optionsForProfile } from '../core/planner.ts'
 
 // ─── EBBBackend ───────────────────────────────────────────────────────────────
 
@@ -126,6 +126,36 @@ export class EBBBackend implements PlotBackend {
     }
   }
 
+  /**
+   * Execute a pen-down stroke with junction-velocity planning. Queues every
+   * LM phase for every move back-to-back so the firmware runs the whole
+   * stroke as one continuous motion — no stops at internal corners.
+   * Sleeps once at the end for the total stroke duration.
+   */
+  private async runStroke(
+    strokePoints: { x: number; y: number }[],
+    profile: ResolvedProfile,
+  ): Promise<void> {
+    const opts = optionsForProfile(profile, true)
+    const planned = planStroke(strokePoints, opts)
+    let totalDurationS = 0
+    for (const move of planned) {
+      for (const phase of move.phases) {
+        await this.ebb.lm(
+          phase.rate1Reg, phase.steps1, phase.accel1Reg,
+          phase.rate2Reg, phase.steps2, phase.accel2Reg,
+        )
+      }
+      totalDurationS += move.durationS
+    }
+    if (totalDurationS > 0) {
+      await sleep(Math.round(totalDurationS * 1000) + 20)
+    }
+    const last = strokePoints[strokePoints.length - 1]
+    this.currentX = last.x
+    this.currentY = last.y
+  }
+
   /** Poll QM until motors are idle (FIFO drained). Gives up after 30s. */
   private async waitForMotorsIdle(): Promise<void> {
     const deadline = Date.now() + 30_000
@@ -190,7 +220,8 @@ export class EBBBackend implements PlotBackend {
     for (let copy = 0; copy < copies; copy++) {
       if (copy > 0 && pageDelayMs > 0) await sleep(pageDelayMs)
 
-      for (let i = copy === 0 ? firstIdx : 0; i < moves.length; i++) {
+      let i = copy === 0 ? firstIdx : 0
+      while (i < moves.length) {
         if (signal?.aborted) {
           if (this.penIsDown) {
             await this.ebb.penUp().catch(() => undefined)
@@ -203,38 +234,77 @@ export class EBBBackend implements PlotBackend {
         }
 
         const move = moves[i]
-        const dx = move.x - this.currentX
-        const dy = move.y - this.currentY
-        const dist = Math.sqrt(dx * dx + dy * dy)
 
-        if (move.penDown && !this.penIsDown) {
+        // Pen-up travel: single move, rest-to-rest. Just navigate to the next
+        // position and advance the index.
+        if (!move.penDown) {
+          if (this.penIsDown) {
+            // Fast lift: pen continues rising to full up while we travel.
+            // Saves ~140 ms per stroke transition vs waiting for full settle.
+            await this.ebb.penUpFast()
+            this.penIsDown = false
+            emitter.emit('pen:up')
+          }
+          const dx = move.x - this.currentX
+          const dy = move.y - this.currentY
+          const dist = Math.hypot(dx, dy)
+          if (dist > 0.001) {
+            if (this.useLm) await this.lmSingleMove(dx, dy, profile, false)
+            else            await this.ebb.move(dx, dy, speedUp)
+            this.currentX = move.x
+            this.currentY = move.y
+            travelM += dist / 1000
+          }
+          i++
+          continue
+        }
+
+        // Pen-down stroke: gather all consecutive pen-down moves as one stroke
+        // and plan them together with junction velocities so we don't stop
+        // at internal corners.
+        const strokeStart = { x: this.currentX, y: this.currentY }
+        const strokePoints: { x: number; y: number }[] = [strokeStart]
+        const strokeStartIdx = i
+        while (i < moves.length && moves[i].penDown) {
+          strokePoints.push({ x: moves[i].x, y: moves[i].y })
+          i++
+        }
+
+        if (strokePoints.length < 2) continue
+
+        if (!this.penIsDown) {
           await this.ebb.penDown()
           this.penIsDown = true
           penLifts++
           emitter.emit('pen:down')
-        } else if (!move.penDown && this.penIsDown) {
-          await this.ebb.penUp()
-          this.penIsDown = false
-          emitter.emit('pen:up')
         }
 
-        if (dist > 0.001) {
-          if (this.useLm) {
-            await this.lmSingleMove(dx, dy, profile, this.penIsDown)
-          } else {
-            const speed = this.penIsDown ? speedDown : speedUp
-            await this.ebb.move(dx, dy, speed)
+        if (this.useLm) {
+          await this.runStroke(strokePoints, profile)
+        } else {
+          // SM fallback: per-move constant-speed. Loses junction-velocity benefits.
+          for (let k = 1; k < strokePoints.length; k++) {
+            const dx = strokePoints[k].x - this.currentX
+            const dy = strokePoints[k].y - this.currentY
+            if (Math.hypot(dx, dy) > 0.001) {
+              await this.ebb.move(dx, dy, speedDown)
+              this.currentX = strokePoints[k].x
+              this.currentY = strokePoints[k].y
+            }
           }
-          this.currentX = move.x
-          this.currentY = move.y
-
-          if (this.penIsDown) pendownM += dist / 1000
-          else                travelM  += dist / 1000
         }
 
-        if (i % 50 === 0) {
-          emitter.emit('progress', (copy + i / moves.length) / copies, 0)
+        // Track accumulated pen-down distance
+        for (let k = 1; k < strokePoints.length; k++) {
+          pendownM += Math.hypot(
+            strokePoints[k].x - strokePoints[k - 1].x,
+            strokePoints[k].y - strokePoints[k - 1].y,
+          ) / 1000
         }
+
+        // Progress: emit every stroke boundary (at most ~N progress events per plot)
+        emitter.emit('progress', (copy + i / moves.length) / copies, 0)
+        void strokeStartIdx
       }
 
       // Force pen up via S2 — SP,0 can be silently no-op'd by firmware if it

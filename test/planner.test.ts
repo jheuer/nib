@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'bun:test'
-import { planTrapezoid, planMove } from '../src/core/planner.ts'
+import { planTrapezoid, planMove, planStroke } from '../src/core/planner.ts'
 import { STEPS_PER_MM } from '../src/backends/ebb-protocol.ts'
 
 describe('planTrapezoid', () => {
@@ -91,5 +91,91 @@ describe('planMove', () => {
     const total2 = m.phases.reduce((s, p) => s + p.steps2, 0)
     expect(total1).toBe(Math.round(20 * STEPS_PER_MM))
     expect(total2).toBe(Math.round(-20 * STEPS_PER_MM))
+  })
+})
+
+describe('planStroke (junction velocities)', () => {
+  const opts = { vMax: 50, accel: 2000 }
+
+  it('single segment starts and ends at rest (same as planMove)', () => {
+    const moves = planStroke([{ x: 0, y: 0 }, { x: 100, y: 0 }], opts)
+    expect(moves.length).toBe(1)
+    expect(moves[0].phases[0].vEntry).toBe(0)
+    expect(moves[0].phases[moves[0].phases.length - 1].vExit).toBe(0)
+  })
+
+  it('straight-line stroke (collinear segments) has internal junctions near vMax', () => {
+    // Three collinear segments — no turn angle, junction should be unconstrained.
+    const moves = planStroke([
+      { x: 0,  y: 0 },
+      { x: 30, y: 0 },
+      { x: 60, y: 0 },
+      { x: 90, y: 0 },
+    ], opts)
+    expect(moves.length).toBe(3)
+    // Middle junctions: exit of move[0] and entry of move[1] should equal vMax
+    const exit0  = moves[0].phases[moves[0].phases.length - 1].vExit
+    const entry1 = moves[1].phases[0].vEntry
+    expect(exit0).toBeCloseTo(opts.vMax, 3)
+    expect(entry1).toBeCloseTo(opts.vMax, 3)
+    // Overall: starts at rest, ends at rest
+    expect(moves[0].phases[0].vEntry).toBe(0)
+    expect(moves[2].phases[moves[2].phases.length - 1].vExit).toBe(0)
+  })
+
+  it('180° reversal (U-turn) forces zero velocity at the junction', () => {
+    // Go right, then back left along the same line — must stop at the corner.
+    const moves = planStroke([
+      { x: 0,  y: 0 },
+      { x: 30, y: 0 },
+      { x: 0,  y: 0 },
+    ], opts)
+    expect(moves.length).toBe(2)
+    const exit0  = moves[0].phases[moves[0].phases.length - 1].vExit
+    const entry1 = moves[1].phases[0].vEntry
+    expect(exit0).toBe(0)
+    expect(entry1).toBe(0)
+  })
+
+  it('90° corner has an intermediate junction speed (> 0, < vMax)', () => {
+    // Long legs so endpoints don't dominate via accel distance limit.
+    const moves = planStroke([
+      { x: 0,   y: 0 },
+      { x: 100, y: 0 },
+      { x: 100, y: 100 },
+    ], opts)
+    expect(moves.length).toBe(2)
+    const corner = moves[0].phases[moves[0].phases.length - 1].vExit
+    expect(corner).toBeGreaterThan(0)
+    expect(corner).toBeLessThan(opts.vMax)
+  })
+
+  it('start and end velocities are always zero for the whole stroke', () => {
+    const moves = planStroke([
+      { x: 0,  y: 0 },
+      { x: 10, y: 0 },
+      { x: 10, y: 5 },
+      { x: 20, y: 5 },
+    ], opts)
+    expect(moves[0].phases[0].vEntry).toBe(0)
+    const last = moves[moves.length - 1]
+    expect(last.phases[last.phases.length - 1].vExit).toBe(0)
+  })
+
+  it('per-axis step totals are preserved across the stroke', () => {
+    const points = [
+      { x: 0,  y: 0 },
+      { x: 30, y: 10 },
+      { x: 60, y: 10 },
+      { x: 60, y: 30 },
+    ]
+    const moves = planStroke(points, opts)
+    let total1 = 0, total2 = 0
+    for (const m of moves) {
+      for (const p of m.phases) { total1 += p.steps1; total2 += p.steps2 }
+    }
+    // Net displacement = (60, 30). Axis motor steps: (60+30)*80 = 7200, (60-30)*80 = 2400.
+    expect(total1).toBe(7200)
+    expect(total2).toBe(2400)
   })
 })

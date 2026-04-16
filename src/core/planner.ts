@@ -250,6 +250,117 @@ export function planMove(
   }
 }
 
+// ─── Stroke planner (junction velocities) ───────────────────────────────────
+
+/**
+ * Junction deviation — how far the actual path is allowed to deviate from
+ * the ideal sharp corner when cornering under the given acceleration.
+ * Larger = faster cornering, smaller = more accurate but slower.
+ * 0.05 mm is conservative; Marlin's default is 0.013 mm, Prusa's is 0.1.
+ */
+const JUNCTION_DEVIATION_MM = 0.05
+
+export interface Segment {
+  /** endpoint X in mm */
+  x: number
+  /** endpoint Y in mm */
+  y: number
+}
+
+/**
+ * Plan a stroke of connected segments with non-zero junction velocities.
+ * Input is the sequence of endpoints (starting with the pen-down entry point,
+ * i.e. points[0] = where the stroke begins). Output is one PlannedMove per
+ * segment between consecutive points, with vEntry/vExit chosen so consecutive
+ * moves flow smoothly without stopping at internal junctions.
+ *
+ * Endpoints (first and last move of the stroke) start and end at rest.
+ *
+ * Implementation: compute per-junction speed caps from the turn angle via
+ * Marlin-style junction deviation, then run forward + backward passes.
+ */
+export function planStroke(points: Segment[], options: PlanOptions): PlannedMove[] {
+  if (points.length < 2) return []
+
+  const n = points.length - 1   // number of segments
+  const segs: { dx: number; dy: number; dist: number }[] = []
+  for (let i = 0; i < n; i++) {
+    const dx = points[i + 1].x - points[i].x
+    const dy = points[i + 1].y - points[i].y
+    segs.push({ dx, dy, dist: Math.hypot(dx, dy) })
+  }
+
+  // Junction caps: vJunction[i] = max allowed speed at the junction AFTER segment i.
+  // vJunction[n-1] is the stroke's exit speed → 0 (rest at end).
+  // vJunction[-1] conceptually = 0 (rest at start) — handled in forward pass.
+  const vJunction: number[] = new Array(n)
+  vJunction[n - 1] = 0  // end at rest
+
+  for (let i = 0; i < n - 1; i++) {
+    vJunction[i] = junctionSpeed(segs[i], segs[i + 1], options.accel)
+    if (vJunction[i] > options.vMax) vJunction[i] = options.vMax
+  }
+
+  // Forward pass: entry velocity of segment i+1 is bounded by what we can reach
+  // from entry velocity of segment i, accelerating across segment i's distance.
+  //   vExit[i] ≤ sqrt(vEntry[i]² + 2·a·d[i])
+  // Initial: vEntry[0] = 0 (start at rest).
+  const vEntry: number[] = new Array(n)
+  vEntry[0] = 0
+  for (let i = 0; i < n - 1; i++) {
+    const vReachable = Math.sqrt(vEntry[i] * vEntry[i] + 2 * options.accel * segs[i].dist)
+    vEntry[i + 1] = Math.min(vReachable, vJunction[i])
+  }
+
+  // Backward pass: entry velocity of segment i is bounded by what's reachable
+  // from the (already-constrained) entry velocity of segment i+1 by decelerating.
+  //   vEntry[i] ≤ sqrt(vEntry[i+1]² + 2·a·d[i])
+  // End: exit of last segment is 0, so vEntry[n-1] ≤ sqrt(2·a·d[n-1]).
+  let vExitNext = 0
+  for (let i = n - 1; i >= 0; i--) {
+    const vReachable = Math.sqrt(vExitNext * vExitNext + 2 * options.accel * segs[i].dist)
+    vEntry[i] = Math.min(vEntry[i], vReachable)
+    vExitNext = vEntry[i]
+  }
+
+  // vEntry[i] is now each segment's entry velocity. Each segment's exit =
+  // next segment's entry, and the last segment's exit = 0.
+  const out: PlannedMove[] = []
+  for (let i = 0; i < n; i++) {
+    const vEx = i < n - 1 ? vEntry[i + 1] : 0
+    out.push(planMove(segs[i].dx, segs[i].dy, vEntry[i], vEx, options))
+  }
+  return out
+}
+
+/**
+ * Compute the max allowed speed at the junction between two segments, using
+ * Marlin's junction-deviation model.
+ *
+ *   cosθ = dot(a_hat, b_hat)     where a points INTO the junction,
+ *                                      b points OUT of the junction
+ *   θ = 0 (straight)     → cos=1     → no constraint (return Infinity)
+ *   θ = π (reversal)     → cos=-1    → must stop (return 0)
+ *
+ * Formula:
+ *   vJunction² = accel · JUNCTION_DEVIATION · (1 + cosθ) / (1 - cosθ)
+ */
+function junctionSpeed(
+  a: { dx: number; dy: number; dist: number },
+  b: { dx: number; dy: number; dist: number },
+  accel: number,
+): number {
+  if (a.dist < 1e-9 || b.dist < 1e-9) return 0
+  const cosTheta = (a.dx * b.dx + a.dy * b.dy) / (a.dist * b.dist)
+  // Clamp into [-1, 1] — small floating-point drift could push it outside.
+  const c = Math.max(-1, Math.min(1, cosTheta))
+  if (c <= -1 + 1e-9) return 0             // near-reversal: must stop
+  if (c >= 1 - 1e-9)  return Infinity      // near-straight: unconstrained
+  const num = accel * JUNCTION_DEVIATION_MM * (1 + c)
+  const den = 1 - c
+  return Math.sqrt(num / den)
+}
+
 // ─── Speed / accel resolution from profile ───────────────────────────────────
 
 import type { ResolvedProfile } from './job.ts'

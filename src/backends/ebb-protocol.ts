@@ -323,6 +323,22 @@ export class EBBPort {
   }
 
   /**
+   * Pen up for plot transitions between strokes. Sleeps only long enough for
+   * the pen to clear the paper (default 80ms) — the servo continues rising
+   * to its full up target in the background while the next travel move runs.
+   * Safe because the subsequent pen-up travel move takes much longer than the
+   * remaining servo travel, so the pen is fully up before we land at the
+   * next stroke's entry point.
+   */
+  async penUpFast(clearMs = 80): Promise<void> {
+    await this.command(`SP,0,80`)
+    if (this.servoConfigured) {
+      await this.command(`S2,${this.servoUpRaw},4,16000,0`)
+    }
+    await sleep(clearMs)
+  }
+
+  /**
    * Pen down. Duration = servo transition time in ms.
    * See penUp for why S2 is fired alongside SP.
    *
