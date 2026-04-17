@@ -68,6 +68,11 @@ export const previewCmd = defineCommand({
       type: 'string',
       description: 'Rotate content before computing stats. "auto" (default) matches portrait SVGs to landscape machines. "none" disables; any number of degrees is also accepted.',
     },
+    'hide-envelope': {
+      type: 'boolean',
+      description: 'Suppress the machine envelope + home marker overlay in --open preview (on by default when a machine is configured)',
+      default: false,
+    },
   },
   async run({ args }) {
     const profileName = args.profile ?? process.env.NIB_PROFILE
@@ -247,40 +252,118 @@ export const previewCmd = defineCommand({
       await openBrowserPreview(processedSvg, name, {
         nibSizeMm: profile.nibSizeMm,
         color: profile.color,
+        contentWidthMm:  svgStats.widthMm,
+        contentHeightMm: svgStats.heightMm,
+        envelope: args['hide-envelope'] ? undefined : envEarly?.envelope,
+        marginMm: args['hide-envelope'] ? undefined : envEarly?.marginMm,
+        rotateDeg,
       })
     }
   },
 })
 
+interface PreviewOpts {
+  nibSizeMm?: number
+  color?: string
+  contentWidthMm: number | null
+  contentHeightMm: number | null
+  envelope?: { widthMm: number; heightMm: number }
+  marginMm?: number
+  rotateDeg: number
+}
+
 /**
- * Generates an HTML wrapper around the SVG that renders strokes at realistic
- * nib width (if set on the profile) and in the profile's ink colour.
+ * Generate an HTML wrapper around the SVG that renders strokes at realistic
+ * nib width, in the profile's ink colour, and (when a machine envelope is
+ * configured) inside an outline of the machine envelope + safety margin + home
+ * corner marker — so the user can see fit, orientation, and home placement
+ * before committing to paper.
  */
 async function openBrowserPreview(
-  svg: string, name: string,
-  pen: { nibSizeMm?: number; color?: string } = {},
+  svg: string, name: string, opts: PreviewOpts,
 ): Promise<void> {
-  // Build inline styles that apply to paths/polylines/lines inside the SVG.
-  // A declared `nib_size_mm` overrides any author-specified stroke-width so the
-  // preview matches what will actually land on paper.
-  const ink = pen.color ?? '#111'
-  const pathStyle = pen.nibSizeMm
-    ? `stroke:${ink}; stroke-width:${pen.nibSizeMm}mm; stroke-linecap:round; stroke-linejoin:round; fill:none`
+  // Path styling: profile-supplied ink colour + realistic nib width. Applied
+  // via CSS to every geometry element inside the user's SVG.
+  const ink = opts.color ?? '#111'
+  const pathStyle = opts.nibSizeMm
+    ? `stroke:${ink}; stroke-width:${opts.nibSizeMm}mm; stroke-linecap:round; stroke-linejoin:round; fill:none`
     : `stroke:${ink}; stroke-linecap:round; stroke-linejoin:round; fill:none`
+
+  // The inner <svg> needs explicit width/height in mm so nested viewport
+  // resolution lines up with the envelope (outer) viewBox, which is in mm.
+  // When the author omits width/height, we fall back to the content bbox.
+  const cw = opts.contentWidthMm  ?? 210
+  const ch = opts.contentHeightMm ?? 297
+
+  // If rotation will apply at plot time, show the content rotated — that's
+  // what the user is actually going to get on paper. Rotate around origin
+  // then translate the post-rotation bbox back to (0,0) (same transform the
+  // moves pipeline applies).
+  const { rotateTransform, rotatedW, rotatedH } = rotationTransform(cw, ch, opts.rotateDeg)
+
+  const envW = opts.envelope?.widthMm  ?? rotatedW
+  const envH = opts.envelope?.heightMm ?? rotatedH
+  const showEnvelope = !!opts.envelope
+  const margin = opts.marginMm ?? 0
+
+  // Envelope outline + dashed margin inset + home corner marker at (0,0).
+  // Thin strokes in vector units (mm) so they don't visually overpower the
+  // content at any zoom level.
+  const envelopeOverlay = showEnvelope ? `
+    <rect x="0" y="0" width="${envW}" height="${envH}" fill="white" stroke="#999" stroke-width="0.3"/>
+    ${margin > 0 ? `<rect x="${margin}" y="${margin}" width="${envW - 2 * margin}" height="${envH - 2 * margin}" fill="none" stroke="#c8c8c8" stroke-dasharray="1.5,1" stroke-width="0.2"/>` : ''}
+    <g stroke="#d33" stroke-width="0.25" fill="none">
+      <circle cx="0" cy="0" r="1.5"/>
+      <line x1="-3" y1="0" x2="3" y2="0"/>
+      <line x1="0" y1="-3" x2="0" y2="3"/>
+    </g>
+    <text x="3.5" y="4.5" font-family="sans-serif" font-size="3.5" fill="#d33">home (0,0)</text>
+  ` : ''
+
+  // Extract the user's SVG body (everything between <svg> and </svg>) so we
+  // can nest it inside the outer envelope SVG. The outer SVG owns the mm
+  // viewport; the inner container owns the author's original viewBox.
+  const userInner = svg.replace(/^[\s\S]*?<svg[^>]*>/, '').replace(/<\/svg>\s*$/, '')
+  const userViewBoxMatch = svg.match(/viewBox\s*=\s*"([^"]+)"/)
+  const userViewBox = userViewBoxMatch ? userViewBoxMatch[1] : `0 0 ${cw} ${ch}`
+
+  const composite = `<svg xmlns="http://www.w3.org/2000/svg"
+       viewBox="${showEnvelope ? `-5 -5 ${envW + 10} ${envH + 10}` : `0 0 ${rotatedW} ${rotatedH}`}"
+       width="${showEnvelope ? envW + 10 : rotatedW}mm"
+       height="${showEnvelope ? envH + 10 : rotatedH}mm"
+       style="max-width:90vw;max-height:90vh">
+    ${envelopeOverlay}
+    <g transform="${rotateTransform}">
+      <svg x="0" y="0" width="${cw}" height="${ch}" viewBox="${userViewBox}" preserveAspectRatio="xMinYMin meet">
+        ${userInner}
+      </svg>
+    </g>
+  </svg>`
+
+  const legend = showEnvelope
+    ? `envelope ${envW}×${envH}mm${margin > 0 ? ` · ${margin}mm margin` : ''}`
+    : `content ${Math.round(rotatedW)}×${Math.round(rotatedH)}mm`
 
   const previewHtml = `<!DOCTYPE html>
 <html>
 <head>
   <title>nib preview — ${name}</title>
   <style>
-    body { background: #f5f0e8; display: flex; align-items: center; justify-content: center; min-height: 100vh; margin: 0; }
-    svg { max-width: 90vw; max-height: 90vh; border: 1px solid #ccc; background: white; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
-    svg path, svg polyline, svg line, svg polygon, svg circle, svg ellipse, svg rect { ${pathStyle}; }
+    body { background: #f5f0e8; display: flex; align-items: center; justify-content: center; min-height: 100vh; margin: 0; font-family: system-ui, sans-serif; }
+    svg { border: 1px solid #ccc; background: white; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
+    svg path, svg polyline, svg line, svg polygon, svg circle, svg ellipse, svg rect.user { ${pathStyle}; }
+    .legend { position: fixed; bottom: 1rem; right: 1rem; font-family: ui-monospace, monospace; font-size: 12px; color: #666; text-align: right; line-height: 1.4; }
+    .legend .title { color: #333; }
   </style>
 </head>
 <body>
-  ${svg.replace(/<svg/, '<svg style="max-width:90vw;max-height:90vh"')}
-  <p style="position:fixed;bottom:1rem;right:1rem;font-family:monospace;font-size:12px;color:#888">nib preview — ${name}${pen.nibSizeMm ? ` · ${pen.nibSizeMm}mm` : ''}</p>
+  ${composite}
+  <div class="legend">
+    <div class="title">nib preview — ${name}</div>
+    <div>${legend}</div>
+    ${opts.nibSizeMm ? `<div>${opts.nibSizeMm}mm nib${opts.color ? ` · ${opts.color}` : ''}</div>` : ''}
+    ${opts.rotateDeg ? `<div>rotated ${opts.rotateDeg}°</div>` : ''}
+  </div>
 </body>
 </html>`
 
@@ -293,4 +376,35 @@ async function openBrowserPreview(
     : 'xdg-open'
   spawn(opener, [tmpPath], { detached: true, stdio: 'ignore' }).unref()
   process.stderr.write(`  ${chalk.dim(`Opened: ${tmpPath}`)}\n\n`)
+}
+
+/**
+ * Compute an SVG transform string that rotates content by `deg` around the
+ * origin and translates the post-rotation bbox back to (0,0) — matching the
+ * behaviour of `rotateMoves` in src/core/stroke.ts so the preview reflects
+ * what the plot will actually produce. Returns the new bbox dimensions too.
+ */
+function rotationTransform(w: number, h: number, deg: number): {
+  rotateTransform: string
+  rotatedW: number
+  rotatedH: number
+} {
+  const normDeg = ((deg % 360) + 360) % 360
+  if (normDeg === 0) {
+    return { rotateTransform: '', rotatedW: w, rotatedH: h }
+  }
+  const theta = (normDeg * Math.PI) / 180
+  const cos = Math.cos(theta)
+  const sin = Math.sin(theta)
+  // Corners of the unrotated box (0,0)-(w,h), rotated around origin.
+  const pts = [[0, 0], [w, 0], [0, h], [w, h]].map(([x, y]) => [x * cos - y * sin, x * sin + y * cos])
+  const minX = Math.min(...pts.map(p => p[0]))
+  const minY = Math.min(...pts.map(p => p[1]))
+  const maxX = Math.max(...pts.map(p => p[0]))
+  const maxY = Math.max(...pts.map(p => p[1]))
+  return {
+    rotateTransform: `translate(${-minX} ${-minY}) rotate(${normDeg})`,
+    rotatedW: maxX - minX,
+    rotatedH: maxY - minY,
+  }
 }
