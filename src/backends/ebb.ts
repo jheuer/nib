@@ -232,6 +232,73 @@ export class EBBBackend implements PlotBackend {
     this.currentY = 0
   }
 
+  /**
+   * Configure the pen servo + idle timeout and park the pen up. Call once
+   * at the start of a live session so subsequent `plotLiveStroke` calls can
+   * skip re-configuring per stroke.
+   */
+  async configureSession(profile: ResolvedProfile): Promise<void> {
+    await this.ebb.configureServo(profile.penPosUp, profile.penPosDown)
+    await this.ebb.setServoTimeout(profile.servoIdleMs ?? 60_000)
+    await this.ebb.penUp()
+    this.penIsDown = false
+  }
+
+  /**
+   * Plot a single stroke immediately — pen-up travel to its start, pen down,
+   * run the points, pen up again. Does not home or reorder or simplify. Use
+   * this for live/interactive workflows where the next stroke isn't known in
+   * advance. Caller must first `connect()` + `configureSession(profile)`.
+   */
+  async plotLiveStroke(
+    profile: ResolvedProfile,
+    points: { x: number; y: number }[],
+    signal?: AbortSignal,
+  ): Promise<void> {
+    if (points.length < 2) return
+
+    // Pen-up travel to the stroke's start point.
+    const start = points[0]
+    const dx = start.x - this.currentX
+    const dy = start.y - this.currentY
+    if (Math.hypot(dx, dy) > 0.001) {
+      if (this.penIsDown) {
+        await this.ebb.penUpFast()
+        this.penIsDown = false
+      }
+      if (this.useLm) {
+        await this.lmSingleMove(dx, dy, profile, false)
+      } else {
+        await this.ebb.move(dx, dy, percentToMms(profile.speedPenup, false))
+      }
+      this.currentX = start.x
+      this.currentY = start.y
+    }
+
+    // Pen down + run the stroke.
+    if (!this.penIsDown) {
+      await this.ebb.penDown()
+      this.penIsDown = true
+    }
+    if (this.useLm) {
+      await this.runStroke(points, profile, signal)
+    } else {
+      const speedDown = percentToMms(profile.speedPendown, true)
+      for (let k = 1; k < points.length; k++) {
+        const d = { x: points[k].x - this.currentX, y: points[k].y - this.currentY }
+        if (Math.hypot(d.x, d.y) > 0.001) {
+          await this.ebb.move(d.x, d.y, speedDown)
+          this.currentX = points[k].x
+          this.currentY = points[k].y
+        }
+      }
+    }
+
+    // Lift at the end so the user can see the finished stroke cleanly.
+    await this.ebb.penUpFast().catch(() => undefined)
+    this.penIsDown = false
+  }
+
   /** Poll QM until motors are idle (FIFO drained). Gives up after 30s. */
   private async waitForMotorsIdle(): Promise<void> {
     const deadline = Date.now() + 30_000

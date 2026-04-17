@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>nib · live canvas</title>
+  <style>
+    :root {
+      --ink: #111;
+      --paper: #fdfcf7;
+      --muted: #888;
+      --accent: #d33;
+      --rail: #1c1c1c;
+      --arm: #d5d8dc;
+      --arm-edge: #8a8e94;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; min-height: 100vh; background: #ede8dd; color: var(--ink);
+      font: 14px/1.4 system-ui, -apple-system, sans-serif;
+      display: flex; flex-direction: column; align-items: center; padding: 1.5rem;
+    }
+    h1 { font-size: 1rem; font-weight: 600; margin: 0 0 1rem; letter-spacing: 0.02em; }
+    h1 .dim { color: var(--muted); font-weight: 400; }
+    .controls {
+      display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap;
+      margin-bottom: 1rem;
+    }
+    button {
+      background: white; border: 1px solid #ccc; color: var(--ink);
+      padding: 0.4rem 0.9rem; font: inherit; cursor: pointer; border-radius: 3px;
+    }
+    button:hover:not(:disabled) { border-color: var(--ink); }
+    button:disabled { opacity: 0.4; cursor: not-allowed; }
+    button.primary { background: var(--ink); color: white; border-color: var(--ink); }
+    button.danger  { color: var(--accent); border-color: var(--accent); }
+    select { padding: 0.35rem 0.5rem; font: inherit; }
+    .status {
+      font: 12px ui-monospace, monospace; color: var(--muted);
+      margin-left: auto; min-width: 16ch; text-align: right;
+    }
+    .status.ok     { color: #178e4a; }
+    .status.busy   { color: #c58000; }
+    .status.error  { color: var(--accent); }
+    .stage {
+      background: white; box-shadow: 0 4px 14px rgba(0,0,0,0.08);
+      border: 1px solid #d0cabd;
+      position: relative;
+    }
+    canvas {
+      display: block; background: var(--paper);
+      touch-action: none;  /* allow pointer events without scroll/pinch */
+      cursor: crosshair;
+    }
+    .legend {
+      position: fixed; bottom: 1rem; right: 1rem;
+      font: 11px ui-monospace, monospace; color: var(--muted); text-align: right;
+    }
+    .hint { color: var(--muted); font-size: 12px; margin-top: 0.75rem; }
+    kbd {
+      background: #eee; border: 1px solid #ccc; border-bottom-width: 2px;
+      border-radius: 2px; padding: 0 4px; font: 11px ui-monospace, monospace;
+    }
+  </style>
+</head>
+<body>
+  <h1>nib · live canvas <span class="dim">— draw here, plot there</span></h1>
+
+  <div class="controls">
+    <button id="connect" class="primary">Connect AxiDraw</button>
+    <button id="clear" disabled>Clear</button>
+    <button id="home" disabled>Home</button>
+    <button id="close" class="danger" disabled>Disconnect</button>
+
+    <label style="margin-left: 1rem;">
+      paper
+      <select id="paper">
+        <option value="A4-p">A4 portrait (210×297)</option>
+        <option value="A4-l" selected>A4 landscape (297×210)</option>
+        <option value="A3-p">A3 portrait (297×420)</option>
+        <option value="A3-l">A3 landscape (420×297)</option>
+      </select>
+    </label>
+
+    <div id="status" class="status">not connected</div>
+  </div>
+
+  <div class="stage">
+    <canvas id="pad" width="900" height="600"></canvas>
+  </div>
+
+  <p class="hint">
+    Click &amp; drag to draw. Strokes plot immediately as you finish each one.
+    <kbd>Space</kbd> to clear the canvas (plotter state unaffected).
+  </p>
+
+  <div class="legend" id="legend">
+    no profile · default pen
+  </div>
+
+  <script type="module" src="./main.js"></script>
+</body>
+</html>

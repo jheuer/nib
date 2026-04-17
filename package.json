@@ -24,7 +24,8 @@
     "build:browser": "bun build src/browser.ts --outdir dist --target browser",
     "build": "bun run build:cli && bun run build:lib && bun run build:browser",
     "test": "bun test",
-    "typecheck": "bunx tsc --noEmit"
+    "typecheck": "bunx tsc --noEmit",
+    "example:canvas": "bun examples/browser/canvas/serve.ts"
   },
   "dependencies": {
     "@clack/prompts": "^0.9.0",
