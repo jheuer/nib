@@ -1,6 +1,34 @@
 # EBB-Only Plotting Plan
 
-Goal: `nib` offers a high-quality CLI experience for plotting SVGs over USB serial to an EBB-driven AxiDraw, with **no axicli/Python dependency**.
+Goal: `nib` offers a high-quality CLI experience for plotting SVGs over USB serial to an EBB-driven AxiDraw, with **no axicli/Python dependency**. Also a clean TypeScript library for Node and browser consumers.
+
+## Where we're going — ROI-ranked next steps
+
+### Tier 1 — do next (each ≈ ½ day, high leverage)
+
+1. **Hardware validation on real content.** Plot something with curves and connected strokes (anything from `sketches/`) to confirm Phase 2b/2c/3/5a work together on non-fixture content. Cheapest way to surface latent bugs before more code lands on top.
+2. **Phase 6b — WebSerialTransport.** Unlocks browser consumers completely. `~100` lines wrapping a `SerialPort` object, plus a package exports map. Hardware-in-the-loop smoke test in Chrome.
+3. **Phase 6c — `plotStrokes` + `geom` module.** Canonical API for code-first generative sketches (the declared primary web use case). Extract pure geometry helpers from the SVG parser, add the strokes-first pipeline.
+
+### Tier 2 — soon after (each ≈ ½ day, compounding value)
+
+4. **README** — three worked examples: CLI, Node library, browser library. Library without docs is under-adopted.
+5. **`plot()` public API events polish.** Wire `PlotEmitter` into the top-level `plot()` wrapper with typed callbacks (`onProgress`, `onStroke`). Currently only exposed via the lower-level `runJobEbb`.
+6. **Time-based progress bar.** Driven by planner duration instead of move-count. Only matters for long plots but that's when progress matters.
+
+### Tier 3 — nice to have
+
+7. Phase 6d — `Plotter` class (stateful live API, for canvas UIs and camera-in-the-loop).
+8. `<text>` handling — loud warning or Hershey-path conversion (we already have the Hershey font).
+9. Phase 5b — `+pause` / `+speed{N}` layer-label action prefixes.
+10. npm publish — needs README + version tagging + .npmignore.
+11. Shell completions.
+12. Reference-diff harness vs Python axidraw.
+13. `<use href="#...">` SVG resolution.
+
+**Sequencing note.** Tier 1 items are independent — any order works. #1 before #2/#3 is slightly preferred so any bugs land on smaller surface area, but not required.
+
+---
 
 ## Current state (2026-04-16)
 
@@ -138,17 +166,53 @@ CLI storage (profiles.toml, state.toml, job history) stays Node-only, out of the
 7. Split `package.json` exports into `.` / `./core` / `./node` / `./browser` entry points.
 8. Add a browser smoke test (ideally hardware-in-the-loop with a real EBB plus Chrome/Edge).
 
-### Phase 6c — Public API polish
+### Phase 6c — Stroke-level API for code-first sketches (primary use case)
 
-9. Top-level `plot(svg, { transport, profile, optimize, onProgress })` API that wraps the pipeline.
-10. Typed event stream via `PlotEmitter` — `progress`, `pen:up`, `pen:down`, `abort`, `complete`, `layer:start`, `layer:complete`.
-11. README sections for Node / Web / pure-core consumers.
+Decision: code-first generative sketches are the dominant web consumer, not canvas-UI drawing apps. The library should feel natural when a script produces polylines programmatically — no SVG round-trip required.
+
+**Canonical intermediate format: strokes.** Not SVG, not canvas ops, not raw PlannerMove[]. A flat list of polylines with optional layer + skip flags:
+
+```typescript
+interface Stroke {
+  points: { x: number; y: number }[]  // absolute mm
+  layer?: number
+  skip?: boolean
+}
+```
+
+Rationale: intent-level, minimal, works from any source (SVG → strokes, canvas → strokes, code → strokes), flattening math already lives in `svg-to-moves.ts`.
+
+9. Extract `src/core/geom.ts` — pure functions returning `Stroke` or `Stroke[]`: `line`, `polyline`, `arc`, `circle`, `rect`, `bezier`, `polygon`. Most of the flattening logic moves from `svg-to-moves.ts` to `geom.ts` and `svg-to-moves` becomes a thin adapter.
+10. Add `plotStrokes(strokes, options)` to the public API:
+    ```typescript
+    import { plotStrokes, geom } from 'nib'
+    await plotStrokes([
+      geom.polyline(myPoints),
+      geom.circle({ x: 50, y: 50 }, 20),
+    ], { transport, profile, optimize: 2 })
+    ```
+11. Add `strokesToPlannerMoves(strokes)` bridge so consumers can drop into the planner pipeline at any level.
+12. Typed events on `plotStrokes`: `progress`, `stroke:start`, `stroke:complete`, `pen:up`, `pen:down`, `abort`, `complete`.
+
+### Phase 6d — Live Plotter class (deferred, lower priority)
+
+For canvas-UI apps and camera-in-the-loop feedback workflows. Not urgent for code-first sketches.
+
+13. `class Plotter { beginPath(); moveTo(x,y); lineTo(x,y); flush(); ... }` — stateful, imperative, long-lived transport (`connect` once, many plots).
+14. Streaming methods: `await plotter.strokeTo(point)` queues motion and returns when it completes; `plotter.drain()` to await the queue.
+15. Escape hatch: `plotter.raw` exposes the underlying `EbbCommands` for direct protocol access.
+16. Events on the instance — same taxonomy as plotStrokes.
+
+**Concurrency model (locked in):** single plotter per transport. `strokeTo` / `moveTo` queue into a bounded buffer (default ~8 pending). `drain()` awaits empty. `flush()` on a beginPath accumulator commits buffered strokes with junction-velocity planning. Explicit `abort()` emergency-stops and clears the queue.
 
 ### Tradeoff decisions (locked in)
 
 - Single package, multiple entry points (not three packages).
 - WebSerial over WebUSB — better API fit, same browser coverage for practical purposes.
 - Strict library: no `fs` in `nib/core` or `nib/browser`. CLI keeps all its storage helpers.
+- **Strokes, not SVG or canvas, as the canonical intermediate.** SVG stays a first-class input, not a requirement.
+- **Plotter is stateful and long-lived**, not per-plot. Enables live streaming without reconnection overhead.
+- **Queue-based concurrency** on the Plotter — ergonomic for streaming, with explicit drain/abort for control.
 
 ## Phase 5a — SVG layer label convention (done 2026-04-16)
 
