@@ -25,7 +25,8 @@
     "build": "bun run build:cli && bun run build:lib && bun run build:browser",
     "test": "bun test",
     "typecheck": "bunx tsc --noEmit",
-    "example:canvas": "bun examples/browser/canvas/serve.ts"
+    "example:canvas": "bun examples/browser/canvas/serve.ts",
+    "example:p5":     "bun examples/browser/p5/serve.ts"
   },
   "dependencies": {
     "@clack/prompts": "^0.9.0",
