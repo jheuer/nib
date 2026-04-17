@@ -317,64 +317,67 @@ async function openBrowserPreview(
   // Drawn BEHIND the user content (appears before it in document order) so
   // plotted strokes always render on top — the schematic is decoration,
   // not content.
-  // AxiDraw mechanical schematic, to-scale with the envelope. Modeled on the
-  // SE/A3 layout:
-  //   - A long horizontal base rail below the page carrying the gantry beam
-  //     along +X. The home-end (control box + stepper) sits at X=0 and is
-  //     labelled "Home"; a smaller idler bracket closes the far end.
-  //   - The gantry beam itself crosses the page vertically at X=0 (its home
-  //     position) and carries the pen carriage along +Y.
-  //   - The pen carriage starts at (0,0) on the beam.
-  // Soft blue-grey stroke so the schematic sits clearly behind the user's
-  // content — it's a spatial reference, not the subject.
-  const rail = '#c8d4e5'
-  const railDark = '#8ba1bd'
-  const homeBlockW = 16  // mm — home-end control box
-  const homeBlockH = 10
-  const farBlockW = 6    // mm — idler bracket at opposite end
-  const farBlockH = 8
-  const railY = envH + 6
+  // AxiDraw mechanical schematic, to-scale with the envelope. SE/A3 layout:
+  //   - Gantry rail: the heavy black extrusion that runs along +X below the
+  //     page. The traverse arm slides along it.
+  //   - Traverse arm: the aluminium beam that crosses the page perpendicular
+  //     to the gantry rail, sliding along +X (here shown at its home X=0).
+  //     The pen carriage rides the traverse arm along +Y.
+  //   - Home is the corner where both axes read 0. +X extends across the
+  //     page; -X is behind the home block. +Y extends down the traverse arm;
+  //     -Y is past the end-cap (not reachable).
+  //
+  // Both parts are drawn to scale against the envelope so the user can see
+  // the physical extents of the machine relative to their content.
+  const railBlack = '#1c1c1c'
+  const armSilver = '#d5d8dc'
+  const armEdge   = '#8a8e94'
+  const labelInk  = '#666'
+  const gantryRailH  = 14   // mm — thickness of the black base extrusion
+  const traverseArmW = 10   // mm — thickness of the silver beam
+  const homeBlockW = 18     // mm — home-end control box (stepper + PCB)
+  const homeBlockH = gantryRailH + 6
+  const farBlockW  = 6
+  const railTop = envH + 8                      // top of gantry rail, 8mm below page
+  const railBottom = railTop + gantryRailH
   const gantryOverlay = showEnvelope ? `
-    <!-- Base rail: long strip running along +X below the envelope -->
-    <g stroke="${rail}" fill="none" stroke-linecap="round">
-      <line x1="${homeBlockW}" y1="${railY}" x2="${envW - farBlockW}" y2="${railY}" stroke-width="0.6"/>
-      <line x1="${homeBlockW}" y1="${railY + 1.5}" x2="${envW - farBlockW}" y2="${railY + 1.5}" stroke-width="0.3" stroke-dasharray="1,0.8"/>
-    </g>
-    <!-- Home-end: control box + stepper block at X=0 -->
-    <g>
-      <rect x="${-homeBlockW + 0}" y="${railY - homeBlockH / 2}" width="${homeBlockW}" height="${homeBlockH}" fill="${railDark}" stroke="none" rx="0.5"/>
-      <text x="${-homeBlockW / 2}" y="${railY + 1}" text-anchor="middle" font-family="sans-serif" font-size="2.4" fill="white">Home</text>
-    </g>
-    <!-- Far-end idler bracket at X=envW -->
-    <rect x="${envW}" y="${railY - farBlockH / 2}" width="${farBlockW}" height="${farBlockH}" fill="${railDark}" stroke="none" rx="0.5"/>
-    <!-- Gantry beam: vertical bar at current home X=0 crossing the page -->
-    <g stroke="${railDark}" fill="none">
-      <line x1="0" y1="-2" x2="0" y2="${envH + 2}" stroke-width="1.4"/>
-      <!-- beam end-cap at the base-rail side, sits on the rail -->
-      <rect x="-3" y="${envH + 2}" width="6" height="${railY - envH - 2 + 0.5}" fill="${railDark}" stroke="none" rx="0.3"/>
-    </g>
-    <!-- Pen carriage at (0,0) on the beam -->
-    <rect x="-2.6" y="-2.6" width="5.2" height="5.2" fill="${railDark}" stroke="none" rx="0.3"/>
-    <!-- Travel arrows -->
-    <g stroke="${railDark}" stroke-width="0.4" fill="none">
-      <g transform="translate(${envW * 0.5}, ${railY + 10})">
-        <line x1="-14" y1="0" x2="14" y2="0"/>
-        <line x1="14" y1="0" x2="11" y2="-1.5"/>
-        <line x1="14" y1="0" x2="11" y2="1.5"/>
-        <line x1="-14" y1="0" x2="-11" y2="-1.5"/>
-        <line x1="-14" y1="0" x2="-11" y2="1.5"/>
+    <!-- Gantry rail: thick black extrusion running below the envelope -->
+    <rect x="${-homeBlockW + homeBlockW - 2}" y="${railTop}" width="${envW + farBlockW + 2}" height="${gantryRailH}" fill="${railBlack}" stroke="none"/>
+    <!-- Belt line along the rail, subtle silver highlight -->
+    <line x1="${-homeBlockW + homeBlockW}" y1="${railTop + gantryRailH / 2}" x2="${envW + farBlockW}" y2="${railTop + gantryRailH / 2}" stroke="${armSilver}" stroke-width="0.3" stroke-dasharray="1.4,1"/>
+    <!-- Home-end: control box + stepper, sits at X=0 -->
+    <rect x="${-homeBlockW}" y="${railTop - 3}" width="${homeBlockW}" height="${homeBlockH}" fill="${railBlack}" stroke="none" rx="0.6"/>
+    <text x="${-homeBlockW / 2}" y="${railTop + gantryRailH / 2 + 1}" text-anchor="middle" font-family="sans-serif" font-size="2.8" fill="white" font-weight="600">Home</text>
+    <!-- Far-end idler bracket -->
+    <rect x="${envW + 2}" y="${railTop - 1}" width="${farBlockW}" height="${gantryRailH + 2}" fill="${railBlack}" stroke="none" rx="0.4"/>
+    <!-- Traverse arm: silver aluminium beam at home X=0, spans Y = 0..envH.
+         Extends slightly past the page on both ends and connects to the rail. -->
+    <rect x="${-traverseArmW / 2}" y="-4" width="${traverseArmW}" height="${envH + 4 + (railBottom - envH)}" fill="${armSilver}" stroke="${armEdge}" stroke-width="0.2" rx="0.4"/>
+    <!-- Arm-to-rail carriage block (sits ON the rail at current X=0) -->
+    <rect x="${-traverseArmW / 2 - 2}" y="${railTop - 1}" width="${traverseArmW + 4}" height="${gantryRailH + 2}" fill="${armEdge}" stroke="none" rx="0.5"/>
+    <!-- Pen carriage at (0,0) on the traverse arm -->
+    <rect x="${-traverseArmW / 2 - 1}" y="-3" width="${traverseArmW + 2}" height="6" fill="${armEdge}" stroke="none" rx="0.3"/>
+    <!-- Travel arrows: +X along bottom, +Y down the right side -->
+    <g stroke="${labelInk}" stroke-width="0.4" fill="none">
+      <g transform="translate(${envW / 2}, ${railBottom + 10})">
+        <line x1="-18" y1="0" x2="18" y2="0"/>
+        <line x1="18" y1="0" x2="14" y2="-1.8"/>
+        <line x1="18" y1="0" x2="14" y2="1.8"/>
       </g>
-      <g transform="translate(${envW + 10}, ${envH * 0.5}) rotate(90)">
-        <line x1="-14" y1="0" x2="14" y2="0"/>
-        <line x1="14" y1="0" x2="11" y2="-1.5"/>
-        <line x1="14" y1="0" x2="11" y2="1.5"/>
-        <line x1="-14" y1="0" x2="-11" y2="-1.5"/>
-        <line x1="-14" y1="0" x2="-11" y2="1.5"/>
+      <g transform="translate(${envW + 12}, ${envH / 2}) rotate(90)">
+        <line x1="-18" y1="0" x2="18" y2="0"/>
+        <line x1="18" y1="0" x2="14" y2="-1.8"/>
+        <line x1="18" y1="0" x2="14" y2="1.8"/>
       </g>
     </g>
-    <g font-family="sans-serif" font-size="2.6" fill="${railDark}">
-      <text x="${envW * 0.5}" y="${railY + 14}" text-anchor="middle">gantry travel · X</text>
-      <text x="${envW + 14}" y="${envH * 0.5}" text-anchor="middle" transform="rotate(90 ${envW + 14} ${envH * 0.5})">pen travel · Y</text>
+    <g font-family="sans-serif" font-size="3" fill="${labelInk}">
+      <text x="${envW / 2}" y="${railBottom + 14.5}" text-anchor="middle">+X  ·  traverse along gantry rail</text>
+      <text x="${envW + 16}" y="${envH / 2}" text-anchor="middle" transform="rotate(90 ${envW + 16} ${envH / 2})">+Y  ·  pen along traverse arm</text>
+    </g>
+    <!-- Non-reachable direction markers near home -->
+    <g font-family="sans-serif" font-size="2.2" fill="#b4b7bc">
+      <text x="-4" y="${envH / 2}" text-anchor="end" transform="rotate(-90 -4 ${envH / 2})">−Y (past arm end)</text>
+      <text x="${envW / 2}" y="-4" text-anchor="middle">−X (behind home block)</text>
     </g>
   ` : ''
 
@@ -398,13 +401,16 @@ async function openBrowserPreview(
   const userViewBox = userViewBoxMatch ? userViewBoxMatch[1] : `0 0 ${cw} ${ch}`
 
   // When the envelope overlay is on, pad the outer viewBox enough to fit the
-  // home-block extension (left), the schematic rail + arrows (below), and the
+  // home-block extension (left), the gantry rail + arrows (below), and the
   // Y-axis label (right).
-  const pad = showEnvelope ? 26 : 0
+  const padLeft   = showEnvelope ? 22 : 0
+  const padRight  = showEnvelope ? 24 : 0
+  const padTop    = showEnvelope ?  8 : 0
+  const padBottom = showEnvelope ? 32 : 0
   const composite = `<svg xmlns="http://www.w3.org/2000/svg"
-       viewBox="${showEnvelope ? `${-pad} ${-pad} ${envW + 2 * pad} ${envH + 2 * pad}` : `0 0 ${rotatedW} ${rotatedH}`}"
-       width="${showEnvelope ? envW + 2 * pad : rotatedW}mm"
-       height="${showEnvelope ? envH + 2 * pad : rotatedH}mm"
+       viewBox="${showEnvelope ? `${-padLeft} ${-padTop} ${envW + padLeft + padRight} ${envH + padTop + padBottom}` : `0 0 ${rotatedW} ${rotatedH}`}"
+       width="${showEnvelope ? envW + padLeft + padRight : rotatedW}mm"
+       height="${showEnvelope ? envH + padTop + padBottom : rotatedH}mm"
        style="max-width:90vw;max-height:90vh">
     ${envelopeOverlay}
     <g class="user-content" transform="${rotateTransform}">
