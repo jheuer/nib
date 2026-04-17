@@ -46,11 +46,14 @@ export type { SvgStats } from './backends/svg-stats.ts'
 
 export {
   EbbCommands,
-  lmRateReg, lmAccelReg, firmwareAtLeast,
-  SERVO_MIN, SERVO_MAX, STEPS_PER_MM, LM_TICK_HZ, LM_MIN_FIRMWARE,
+  lmRateReg, lmAccelReg, firmwareAtLeast, firmwareCapabilities,
+  SERVO_MIN, SERVO_MAX, STEPS_PER_MM, LM_TICK_HZ,
+  LM_MIN_FIRMWARE, TAG_MIN_FIRMWARE, TAG_USB_MIN_FIRMWARE,
+  HM_MIN_FIRMWARE, QM_MIN_FIRMWARE, ES_MIN_FIRMWARE, QS_MIN_FIRMWARE,
   SPEED_PENDOWN_MAX_MMS, SPEED_PENUP_MAX_MMS,
   LM_SPEED_PENDOWN_MAX_MMS, LM_SPEED_PENUP_MAX_MMS, ACCEL_MAX_MMS2,
 } from './backends/ebb-protocol.ts'
+export type { EbbCapabilities } from './backends/ebb-protocol.ts'
 
 export { EBBBackend, runJobEbb } from './backends/ebb.ts'
 export type { EbbPlotOptions } from './backends/ebb.ts'

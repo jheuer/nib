@@ -17,7 +17,7 @@ import type { JobMetrics } from '../core/job.ts'
 import {
   EbbCommands,
   SPEED_PENDOWN_MAX_MMS, SPEED_PENUP_MAX_MMS,
-  LM_MIN_FIRMWARE, firmwareAtLeast,
+  firmwareCapabilities, type EbbCapabilities,
 } from './ebb-protocol.ts'
 import type { EbbTransport } from './transport.ts'
 import { svgToMoves, type PlannerMove } from './svg-to-moves.ts'
@@ -34,6 +34,13 @@ export class EBBBackend implements PlotBackend {
   private currentY = 0
   private penIsDown = false
   private useLm = false
+  /** Firmware capability flags, populated by `connect()`. Defaults to "nothing
+   *  available" so methods that call into guarded features fail cleanly if
+   *  they're (incorrectly) called before connect. */
+  public caps: EbbCapabilities = {
+    firmware: [0, 0, 0], lm: false, qm: false, es: false,
+    hm: false, qs: false, tag: false, tagUsbVisible: false,
+  }
 
   constructor(transport: EbbTransport) {
     this.ebb = new EbbCommands(transport)
@@ -46,13 +53,15 @@ export class EBBBackend implements PlotBackend {
    * probe firmware version, home pen up, enable motors at 1/16 microstep.
    */
   async connect(_port: string = ''): Promise<void> {
-    // Firmware-capability gate for LM (trapezoid accel).
+    // Query firmware + derive per-feature capability flags. Callers can
+    // inspect `backend.caps` before issuing commands that need newer firmware.
     try {
       const fw = await this.ebb.firmwareVersion()
-      this.useLm = firmwareAtLeast(fw, LM_MIN_FIRMWARE)
+      this.caps = firmwareCapabilities(fw)
     } catch {
-      this.useLm = false
+      // Leave caps at the pessimistic defaults.
     }
+    this.useLm = this.caps.lm
 
     // Enable motors now; DO NOT penUp yet. At connect-time we have no profile,
     // so we can't fire the S2 servo-position safety net — a lone SP,0 against
@@ -167,14 +176,25 @@ export class EBBBackend implements PlotBackend {
     // totalDurationS + 2s is a safety upper bound — gives up if the motor
     // never reports idle within a reasonable window (e.g. if the firmware is
     // wedged), rather than hanging forever.
-    const idleDeadline = Date.now() + Math.round(totalDurationS * 1000) + 2000
-    while (Date.now() < idleDeadline) {
+    // Wait for motion to complete. Prefer QM (poll firmware for idle) when
+    // available; fall back to a fixed sleep for firmware < 2.4.4 which
+    // predates the QM command.
+    if (this.caps.qm) {
+      const idleDeadline = Date.now() + Math.round(totalDurationS * 1000) + 2000
+      while (Date.now() < idleDeadline) {
+        if (signal?.aborted) return false
+        try {
+          const { moving } = await this.ebb.queryMotors()
+          if (!moving) break
+        } catch { /* transient — keep polling */ }
+        await sleep(20)
+      }
+    } else {
+      // No QM — sleep for the planned duration plus a small settle margin.
+      // Less precise (we can't detect an early stall) but always correct
+      // on working hardware.
       if (signal?.aborted) return false
-      try {
-        const { moving } = await this.ebb.queryMotors()
-        if (!moving) break
-      } catch { /* transient — keep polling */ }
-      await sleep(20)
+      await sleep(Math.round(totalDurationS * 1000) + 80)
     }
     const last = strokePoints[strokePoints.length - 1]
     this.currentX = last.x
@@ -199,8 +219,13 @@ export class EBBBackend implements PlotBackend {
     reason: string,
     { returnHome = true }: { returnHome?: boolean } = {},
   ): Promise<void> {
-    await this.ebb.emergencyStop().catch(() => undefined)
-    await sleep(100)  // let the firmware process ES and settle
+    // ES (emergency stop) needs firmware ≥ 2.2.7. On older boards we can
+    // only drop any pending sleep and let the remaining FIFO drain — the
+    // pause will be slower but still land cleanly.
+    if (this.caps.es) {
+      await this.ebb.emergencyStop().catch(() => undefined)
+      await sleep(100)  // let the firmware process ES and settle
+    }
     if (this.penIsDown) {
       await this.ebb.penUp().catch(() => undefined)
       this.penIsDown = false
@@ -223,6 +248,12 @@ export class EBBBackend implements PlotBackend {
    * of whether currentX/Y agrees.
    */
   async homeMachine(): Promise<void> {
+    if (!this.caps.hm) {
+      throw new Error(
+        `HM requires EBB firmware ≥ 2.6.2 (board reports ${this.caps.firmware.join('.')}). ` +
+        `Update firmware or perform a manual home.`,
+      )
+    }
     if (this.penIsDown) {
       await this.ebb.penUp().catch(() => undefined)
       this.penIsDown = false

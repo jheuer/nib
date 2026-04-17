@@ -77,6 +77,57 @@ const LM_RATE_SCALE = 2 ** 31
 /** Minimum firmware version that supports LM command. */
 export const LM_MIN_FIRMWARE = [2, 7, 0] as const
 
+/** Minimum firmware for QT/ST (board nickname in EEPROM). */
+export const TAG_MIN_FIRMWARE = [2, 0, 0] as const
+/** Firmware where ST also writes the tag into the USB device name/serial. */
+export const TAG_USB_MIN_FIRMWARE = [2, 5, 5] as const
+/** Minimum firmware for HM (home motor) command. */
+export const HM_MIN_FIRMWARE = [2, 6, 2] as const
+/** Minimum firmware for QM (query motors). Older boards can't do idle-polling. */
+export const QM_MIN_FIRMWARE = [2, 4, 4] as const
+/** Minimum firmware for ES (emergency stop). Older boards can't abort mid-stroke. */
+export const ES_MIN_FIRMWARE = [2, 2, 7] as const
+/** Minimum firmware for QS/CS (step position). */
+export const QS_MIN_FIRMWARE = [2, 4, 3] as const
+
+/**
+ * Per-feature capability flags derived from a firmware version. Use
+ * `firmwareCapabilities(fw)` to compute this once at connect, then consult
+ * the flags instead of re-checking version triples.
+ */
+export interface EbbCapabilities {
+  /** Full version triple, for display / "requires ≥ X.Y.Z" messages. */
+  firmware: readonly [number, number, number]
+  /** LM command available (trapezoidal-accel moves). */
+  lm: boolean
+  /** QM available (idle polling). When false, nib sleeps for planned duration. */
+  qm: boolean
+  /** ES available (emergency stop). When false, SIGINT drains the FIFO instead of aborting. */
+  es: boolean
+  /** HM available (firmware home). When false, resume-after-pause is disabled. */
+  hm: boolean
+  /** QS/CS available (step position). */
+  qs: boolean
+  /** ST/QT available (EEPROM tag for machine registry). */
+  tag: boolean
+  /** ST writes the tag into the USB device name (firmware ≥ 2.5.5). */
+  tagUsbVisible: boolean
+}
+
+/** Compute capability flags from a firmware version triple. */
+export function firmwareCapabilities(fw: readonly [number, number, number]): EbbCapabilities {
+  return {
+    firmware: fw,
+    lm:  firmwareAtLeast(fw, LM_MIN_FIRMWARE),
+    qm:  firmwareAtLeast(fw, QM_MIN_FIRMWARE),
+    es:  firmwareAtLeast(fw, ES_MIN_FIRMWARE),
+    hm:  firmwareAtLeast(fw, HM_MIN_FIRMWARE),
+    qs:  firmwareAtLeast(fw, QS_MIN_FIRMWARE),
+    tag: firmwareAtLeast(fw, TAG_MIN_FIRMWARE),
+    tagUsbVisible: firmwareAtLeast(fw, TAG_USB_MIN_FIRMWARE),
+  }
+}
+
 /** Default per-command response timeout (ms). */
 const COMMAND_TIMEOUT_MS = 3000
 
@@ -141,31 +192,36 @@ export class EbbCommands {
   }
 
   /**
-   * Read the board name stored in EEPROM (QN command, firmware ≥ 2.5.5).
-   * Response is typically `<name>\r\nOK\r\n`. Returns empty string if no name
-   * is set. Nib uses this to auto-select machine config on connect when the
-   * user has multiple AxiDraws.
+   * Read the EBB nickname from EEPROM (QT — Query Tag, firmware ≥ 2.0.0).
+   *
+   * IMPORTANT: the correct command is `QT`, NOT `QN`. QN is "Query Node Count",
+   * an unrelated counter feature that has been around since v1.9.2. Earlier
+   * versions of nib sent `QN` by mistake — if you registered a machine before
+   * this fix, re-run `nib machine register <name>` to write the tag via ST.
+   *
+   * From v2.5.5 the tag also surfaces in the USB device name/serial string.
+   *
+   * Response format: `<tag>\r\nOK\r\n` — empty first line means no tag set.
    */
   async queryName(): Promise<string> {
-    const resp = await this.command('QN')
-    // Response format: "<name>\r\nOK" — the first line before OK is the name.
-    // Some firmwares return just "OK" when no name is set.
+    const resp = await this.command('QT')
     const firstLine = resp.split(/[\r\n]/)[0] ?? ''
     if (firstLine === 'OK') return ''
     return firstLine.trim()
   }
 
   /**
-   * Write the board name to EEPROM (SN command, firmware ≥ 2.5.5). Name is
-   * stored persistently, survives power cycles. Max length is firmware-defined
-   * (16 chars on 2.8.x).
+   * Write the EBB nickname to EEPROM (ST — Set Tag, firmware ≥ 2.0.0). The
+   * tag is persistent and survives power cycles. Max length is 16 characters.
+   *
+   * See queryName() above for the SN/ST naming gotcha.
    */
   async setName(name: string): Promise<void> {
     if (name.length > 16) {
-      throw new Error(`EBB name must be ≤16 characters (got ${name.length})`)
+      throw new Error(`EBB tag must be ≤16 characters (got ${name.length})`)
     }
-    const resp = await this.command(`SN,${name}`)
-    if (!resp.startsWith('OK')) throw new Error(`SN rejected: ${resp}`)
+    const resp = await this.command(`ST,${name}`)
+    if (!resp.startsWith('OK')) throw new Error(`ST rejected: ${resp}`)
   }
 
   /**
