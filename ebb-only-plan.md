@@ -160,11 +160,15 @@ CLI storage (profiles.toml, state.toml, job history) stays Node-only, out of the
 4. Update `EBBBackend` — accept `EbbCommands` (or a transport + construct internally). Drop the "open port from string" convenience.
 5. Update all CLI call sites (`pen`, `move`, `motors`, `home`, `fw`, `release`, `calibrate`, `live`).
 
-### Phase 6b — WebSerial transport + browser entry point
+### Phase 6b — WebSerial transport + browser entry (done 2026-04-16)
 
-6. Add `src/backends/web-serial.ts` — `WebSerialTransport implements EbbTransport` wrapping a WebSerial `SerialPort` object. Provide a helper that prompts `navigator.serial.requestPort()` with the EBB's USB VID/PID filter.
-7. Split `package.json` exports into `.` / `./core` / `./node` / `./browser` entry points.
-8. Add a browser smoke test (ideally hardware-in-the-loop with a real EBB plus Chrome/Edge).
+Shipped the browser support needed to use nib from a web app over WebSerial (Chrome / Edge / Opera).
+
+- `src/backends/web-serial.ts` — `WebSerialTransport` implements `EbbTransport` wrapping an already-opened `SerialPort`. Background read loop → line-buffered queue. `EBB_USB_FILTERS` (VID 0x04d8, PID 0xfd92/93) pre-packaged. `requestEbbPort()` one-call helper: prompts the user, opens at 115200 baud, wraps in a transport.
+- `src/browser.ts` — dedicated browser entry point. Exports pure core + protocol layer + `WebSerialTransport` + browser-native `plot()` / `plotStrokes()` that take inline profile objects (no profiles.toml lookup in the browser).
+- `package.json` `exports` map adds `./browser` alongside the default Node entry. Bundles via `bun run build:browser` → `dist/browser.js`, 130 KB, zero Node API references.
+- Browser bundle explicitly does NOT export `runJobEbb` — that function auto-creates a `NodeSerialTransport` when no transport is given, which would pull Node's fs/child_process into the browser bundle. Browser consumers use `plot` / `plotStrokes` from `nib/browser` instead.
+- Not yet hardware-validated in a real browser; needs a test page in Chrome with a physical EBB attached.
 
 ### Phase 6c — Stroke-level API (done 2026-04-16)
 
