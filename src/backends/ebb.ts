@@ -137,12 +137,14 @@ export class EBBBackend implements PlotBackend {
   private async runStroke(
     strokePoints: { x: number; y: number }[],
     profile: ResolvedProfile,
-  ): Promise<void> {
+    signal?: AbortSignal,
+  ): Promise<boolean> {
     const opts = optionsForProfile(profile, true)
     const planned = planStroke(strokePoints, opts)
     let totalDurationS = 0
     for (const move of planned) {
       for (const phase of move.phases) {
+        if (signal?.aborted) return false
         await this.ebb.lm(
           phase.rate1Reg, phase.steps1, phase.accel1Reg,
           phase.rate2Reg, phase.steps2, phase.accel2Reg,
@@ -150,12 +152,28 @@ export class EBBBackend implements PlotBackend {
       }
       totalDurationS += move.durationS
     }
-    if (totalDurationS > 0) {
-      await sleep(Math.round(totalDurationS * 1000) + 20)
+    // Wait for motion to complete by polling QM, not a fixed sleep. A fixed
+    // sleep either over-waits (pen sits on paper pooling ink at stroke end)
+    // or under-waits (next pen-up fires while motor still moving). Polling
+    // QM lifts the pen within ~20 ms of actual motor idle, regardless of
+    // whether the planner's predicted duration matched wall-clock reality.
+    //
+    // totalDurationS + 2s is a safety upper bound — gives up if the motor
+    // never reports idle within a reasonable window (e.g. if the firmware is
+    // wedged), rather than hanging forever.
+    const idleDeadline = Date.now() + Math.round(totalDurationS * 1000) + 2000
+    while (Date.now() < idleDeadline) {
+      if (signal?.aborted) return false
+      try {
+        const { moving } = await this.ebb.queryMotors()
+        if (!moving) break
+      } catch { /* transient — keep polling */ }
+      await sleep(20)
     }
     const last = strokePoints[strokePoints.length - 1]
     this.currentX = last.x
     this.currentY = last.y
+    return true
   }
 
   /**
@@ -369,7 +387,11 @@ export class EBBBackend implements PlotBackend {
         }
 
         if (this.useLm) {
-          await this.runStroke(strokePoints, profile)
+          const completed = await this.runStroke(strokePoints, profile, signal)
+          if (!completed) {
+            await this.safeAbort(emitter, strokeStartIdx, moves.length, copy, copies, 'aborted')
+            return { stoppedAt: (copy + strokeStartIdx / moves.length) / copies, aborted: true }
+          }
         } else {
           // SM fallback: per-move constant-speed. Loses junction-velocity benefits.
           for (let k = 1; k < strokePoints.length; k++) {

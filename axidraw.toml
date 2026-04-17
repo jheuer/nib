@@ -2,3 +2,4 @@
 # This file dogfoods the library itself.
 model = "A3"
 default_profile = "fineliner"
+margin_mm = 0

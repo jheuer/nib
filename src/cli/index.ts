@@ -9,7 +9,7 @@ import { profileCmd } from './profile.ts'
 import { jobCmd } from './job.ts'
 import { seriesCmd } from './series.ts'
 import { calibrateCmd } from './calibrate.ts'
-import { loadGlobalConfig, saveGlobalConfig, getProfile } from '../core/config.ts'
+import { loadGlobalConfig, saveGlobalConfig, getProfile, resolveProfile } from '../core/config.ts'
 import { SPEED_PENUP_MAX_MMS } from '../backends/ebb-protocol.ts'
 import { connectEbb, findEbbPort } from '../backends/node-serial.ts'
 import { writeProjectConfig } from '../core/config.ts'
@@ -23,6 +23,25 @@ import { advanceArmState, resetArmState, markArmUnknown, loadArmState, formatPos
 // can't travel the full 0–100% servo range without hitting a mechanical stop.
 const PEN_UP_DEFAULT   = 50
 const PEN_DOWN_DEFAULT = 30
+
+/** Warn + require confirmation for `nib home` when tracked offset exceeds this. */
+const LARGE_OFFSET_WARN_MM = 20
+
+/**
+ * Resolve pen positions for manual commands (move / home). Falls back to the
+ * user's default profile, or to built-in defaults. These get written to SC,4
+ * and SC,5 so the S2 force-up safety net in `penUp` actually fires — without
+ * this, SP,0 can silently no-op on some firmware revisions and the pen drags
+ * across the carriage move.
+ */
+async function resolveServoDefaults(): Promise<{ penPosUp: number; penPosDown: number }> {
+  try {
+    const profile = await resolveProfile()
+    return { penPosUp: profile.penPosUp, penPosDown: profile.penPosDown }
+  } catch {
+    return { penPosUp: PEN_UP_DEFAULT, penPosDown: PEN_DOWN_DEFAULT }
+  }
+}
 
 const penCmd = defineCommand({
   meta: { name: 'pen', description: 'Manual pen control' },
@@ -109,25 +128,7 @@ const moveCmd = defineCommand({
     killTimer.unref()
 
     if (args.home) {
-      // Walk back to tracked origin in software, not via firmware HM — that
-      // command returns to "position when EM was last issued", which isn't
-      // the origin we care about if other commands have moved the arm since.
-      const state = await loadArmState()
-      if (state.unknown) {
-        printError(
-          'arm position is unknown — I don\'t know where to home to',
-          're-enable motors with the arm parked at your intended origin: nib motors on',
-        )
-        process.exit(1)
-      }
-      const ebb = await connectEbb(portPath)
-      await ebb.penUp(200)
-      await ebb.enableMotors(1, 1)
-      if (Math.abs(state.x) > 0.01 || Math.abs(state.y) > 0.01) {
-        await ebb.move(-state.x, -state.y, MOVE_SPEED_MMS)
-      }
-      await resetArmState()
-      process.stderr.write(`  Home → (0, 0)\n`)
+      await runHome(portPath, false)
       process.exit(0)
     }
 
@@ -139,6 +140,8 @@ const moveCmd = defineCommand({
     }
 
     const ebb = await connectEbb(portPath)
+    const servo = await resolveServoDefaults()
+    await ebb.configureServo(servo.penPosUp, servo.penPosDown)
     await ebb.penUp(200)
     await ebb.enableMotors(1, 1)
     await ebb.move(xMm ?? 0, yMm ?? 0, MOVE_SPEED_MMS)
@@ -226,6 +229,7 @@ const homeCmd = defineCommand({
   meta: { name: 'home', description: 'Return the arm to the tracked origin (0,0)' },
   args: {
     port: { type: 'string', description: 'Serial port override (env: NIB_PORT)' },
+    yes:  { type: 'boolean', alias: 'y', description: 'Skip large-offset safety prompt', default: false },
   },
   async run({ args }) {
     const rawPort = args.port ?? process.env.NIB_PORT
@@ -236,27 +240,70 @@ const homeCmd = defineCommand({
     }
     const killTimer = setTimeout(() => process.exit(0), 15_000)
     killTimer.unref()
-
-    const state = await loadArmState()
-    if (state.unknown) {
-      printError(
-        'arm position is unknown',
-        're-enable motors with the arm parked at your intended origin: nib motors on',
-      )
-      process.exit(1)
-    }
-
-    const ebb = await connectEbb(portPath)
-    await ebb.penUp(200)
-    await ebb.enableMotors(1, 1)
-    if (Math.abs(state.x) > 0.01 || Math.abs(state.y) > 0.01) {
-      await ebb.move(-state.x, -state.y, MOVE_SPEED_MMS)
-    }
-    await resetArmState()
-    process.stderr.write(`  Home → (0, 0)\n`)
+    await runHome(portPath, args.yes)
     process.exit(0)
   },
 })
+
+/**
+ * Shared home routine used by `nib home` and `nib move --home`.
+ *
+ * Three safety measures before moving:
+ *   1. Refuse if state.toml says position is unknown (motors were released).
+ *   2. Configure the servo *first* so penUp's S2 safety net fires — without
+ *      this, the pen may not actually lift and will drag during the long home
+ *      move. (Saw this crash into a rail with pen-down once already.)
+ *   3. Warn + require confirmation when the tracked offset is suspiciously
+ *      large — catches the "stale state.toml" case where the carriage isn't
+ *      actually where the software thinks it is.
+ */
+async function runHome(portPath: string, skipPrompt: boolean): Promise<void> {
+  const state = await loadArmState()
+  if (state.unknown) {
+    printError(
+      'arm position is unknown',
+      're-enable motors with the arm parked at your intended origin: nib motors on',
+    )
+    process.exit(1)
+  }
+
+  const offset = Math.hypot(state.x, state.y)
+  if (offset > LARGE_OFFSET_WARN_MM && !skipPrompt) {
+    process.stderr.write(
+      `\n  Tracked position is (${state.x.toFixed(1)}, ${state.y.toFixed(1)}) mm — ` +
+      `${offset.toFixed(1)} mm from origin.\n`,
+    )
+    process.stderr.write(
+      `  Homing will move the arm by ${(-state.x).toFixed(1)}, ${(-state.y).toFixed(1)} mm.\n`,
+    )
+    process.stderr.write(
+      `  If that looks wrong (e.g. the arm is actually already near origin), abort with Ctrl-C\n` +
+      `  and run ${chalk.bold('nib motors on')} with the arm parked where you want origin to be.\n`,
+    )
+    process.stderr.write(`  Press Enter to proceed, Ctrl-C to abort: `)
+    await new Promise<void>(resolve => {
+      const onData = () => {
+        process.stdin.removeListener('data', onData)
+        process.stdin.pause()
+        resolve()
+      }
+      process.stdin.resume()
+      process.stdin.once('data', onData)
+    })
+  }
+
+  const ebb = await connectEbb(portPath)
+  // Configure servo BEFORE penUp so the S2 force-up safety net actually fires.
+  const servo = await resolveServoDefaults()
+  await ebb.configureServo(servo.penPosUp, servo.penPosDown)
+  await ebb.penUp(200)
+  await ebb.enableMotors(1, 1)
+  if (Math.abs(state.x) > 0.01 || Math.abs(state.y) > 0.01) {
+    await ebb.move(-state.x, -state.y, MOVE_SPEED_MMS)
+  }
+  await resetArmState()
+  process.stderr.write(`  Home → (0, 0)\n`)
+}
 
 // ─── position ────────────────────────────────────────────────────────────────
 

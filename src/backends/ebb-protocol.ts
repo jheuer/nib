@@ -304,6 +304,9 @@ export class EbbCommands {
     const cmd =
       `LM,${rate1Reg},${steps1},${accel1Reg},` +
       `${rate2Reg},${steps2},${accel2Reg}`
+    if (typeof process !== 'undefined' && process.env?.NIB_VERBOSE) {
+      process.stderr.write(`  [ebb] ${cmd}\n`)
+    }
     const resp = await this.command(cmd)
     if (!resp.startsWith('OK')) throw new Error(`LM rejected: ${resp}`)
   }
