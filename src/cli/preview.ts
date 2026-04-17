@@ -306,12 +306,51 @@ async function openBrowserPreview(
   const showEnvelope = !!opts.envelope
   const margin = opts.marginMm ?? 0
 
-  // Envelope outline + dashed margin inset + home corner marker at (0,0).
-  // Thin strokes in vector units (mm) so they don't visually overpower the
-  // content at any zoom level.
+  // Envelope outline + dashed margin inset + home corner marker + gantry/
+  // traverse schematic. AxiDraw convention: +X runs along the long rails
+  // (the gantry beam slides along X), +Y runs along the gantry beam (the
+  // pen carriage slides along Y). The schematic shows the gantry beam in
+  // its home position at X=0 with an arrow indicating the gantry's travel
+  // direction and the pen carriage shown on the beam at Y=0.
+  //
+  // Drawn BEHIND the user content (appears before it in document order) so
+  // plotted strokes always render on top — the schematic is decoration,
+  // not content.
+  const gantryStroke = '#c8d4e5'  // soft blue-grey
+  const gantryOverlay = showEnvelope ? `
+    <g stroke="${gantryStroke}" fill="none" stroke-linecap="round">
+      <!-- gantry beam at home X=0, full height -->
+      <line x1="0" y1="0" x2="0" y2="${envH}" stroke-width="1.4"/>
+      <!-- pen carriage on gantry at home Y=0 -->
+      <rect x="-2.2" y="-2.2" width="4.4" height="4.4" fill="${gantryStroke}" stroke="none"/>
+      <!-- gantry travel arrow along +X (slight inset from envelope edge) -->
+      <g stroke-width="0.4" transform="translate(${envW * 0.5}, ${envH + 3})">
+        <line x1="-14" y1="0" x2="14" y2="0"/>
+        <line x1="14" y1="0" x2="11" y2="-1.5"/>
+        <line x1="14" y1="0" x2="11" y2="1.5"/>
+        <line x1="-14" y1="0" x2="-11" y2="-1.5"/>
+        <line x1="-14" y1="0" x2="-11" y2="1.5"/>
+      </g>
+      <!-- pen travel arrow along +Y -->
+      <g stroke-width="0.4" transform="translate(${envW + 3}, ${envH * 0.5}) rotate(90)">
+        <line x1="-14" y1="0" x2="14" y2="0"/>
+        <line x1="14" y1="0" x2="11" y2="-1.5"/>
+        <line x1="14" y1="0" x2="11" y2="1.5"/>
+        <line x1="-14" y1="0" x2="-11" y2="-1.5"/>
+        <line x1="-14" y1="0" x2="-11" y2="1.5"/>
+      </g>
+    </g>
+    <g font-family="sans-serif" font-size="2.6" fill="#8aa3bd">
+      <text x="${envW * 0.5}" y="${envH + 7}" text-anchor="middle">gantry travel · X</text>
+      <text x="${envW + 7}" y="${envH * 0.5}" text-anchor="middle" transform="rotate(90 ${envW + 7} ${envH * 0.5})">pen travel · Y</text>
+      <text x="2" y="${envH / 2}" fill="${gantryStroke}" text-anchor="start" transform="rotate(-90 2 ${envH / 2})">gantry beam</text>
+    </g>
+  ` : ''
+
   const envelopeOverlay = showEnvelope ? `
     <rect x="0" y="0" width="${envW}" height="${envH}" fill="white" stroke="#999" stroke-width="0.3"/>
     ${margin > 0 ? `<rect x="${margin}" y="${margin}" width="${envW - 2 * margin}" height="${envH - 2 * margin}" fill="none" stroke="#c8c8c8" stroke-dasharray="1.5,1" stroke-width="0.2"/>` : ''}
+    ${gantryOverlay}
     <g stroke="#d33" stroke-width="0.25" fill="none">
       <circle cx="0" cy="0" r="1.5"/>
       <line x1="-3" y1="0" x2="3" y2="0"/>
@@ -327,10 +366,13 @@ async function openBrowserPreview(
   const userViewBoxMatch = svg.match(/viewBox\s*=\s*"([^"]+)"/)
   const userViewBox = userViewBoxMatch ? userViewBoxMatch[1] : `0 0 ${cw} ${ch}`
 
+  // When the envelope overlay is on, pad the outer viewBox enough to fit the
+  // gantry-travel label on the bottom and the pen-travel label on the right.
+  const pad = showEnvelope ? 14 : 0
   const composite = `<svg xmlns="http://www.w3.org/2000/svg"
-       viewBox="${showEnvelope ? `-5 -5 ${envW + 10} ${envH + 10}` : `0 0 ${rotatedW} ${rotatedH}`}"
-       width="${showEnvelope ? envW + 10 : rotatedW}mm"
-       height="${showEnvelope ? envH + 10 : rotatedH}mm"
+       viewBox="${showEnvelope ? `${-pad} ${-pad} ${envW + 2 * pad} ${envH + 2 * pad}` : `0 0 ${rotatedW} ${rotatedH}`}"
+       width="${showEnvelope ? envW + 2 * pad : rotatedW}mm"
+       height="${showEnvelope ? envH + 2 * pad : rotatedH}mm"
        style="max-width:90vw;max-height:90vh">
     ${envelopeOverlay}
     <g transform="${rotateTransform}">
