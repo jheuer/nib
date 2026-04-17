@@ -50,6 +50,13 @@ export interface ProjectConfig {
   model?: string
   /** Override the machine envelope, e.g. "280x218". Takes precedence over `model`. */
   envelope?: string
+  /**
+   * Safety inset from the machine envelope (mm, all sides). Plots are rejected
+   * if their bounding box comes within this distance of the envelope edge —
+   * protects against end-stop crashes and gives the pen some paper margin.
+   * Default: 5mm.
+   */
+  marginMm?: number
   defaultProfile?: string
   paper?: string
   layers?: LayerConfig[]
@@ -75,6 +82,7 @@ export async function loadProjectConfig(cwd = process.cwd()): Promise<ProjectCon
   const config: ProjectConfig = {}
   if (data['model']) config.model = data['model'] as string
   if (data['envelope']) config.envelope = data['envelope'] as string
+  if (typeof data['margin_mm'] === 'number') config.marginMm = data['margin_mm']
   if (data['default_profile']) config.defaultProfile = data['default_profile'] as string
   if (data['paper']) config.paper = data['paper'] as string
   if (Array.isArray(data['layers'])) {
@@ -309,6 +317,9 @@ export async function resolveProfile(name?: string): Promise<ResolvedProfile> {
 
 import { resolveEnvelope, parseEnvelope, type Envelope } from './envelope.ts'
 
+/** Default safety inset from the machine envelope when none is configured. */
+export const DEFAULT_MARGIN_MM = 5
+
 /**
  * Resolve the machine envelope from any of:
  *   - project.envelope (explicit "WxH" override)
@@ -332,6 +343,21 @@ export async function getMachineEnvelope(): Promise<Envelope | null> {
     if (e) return e
   }
   return null
+}
+
+/**
+ * Effective envelope — the machine envelope shrunk by the configured safety
+ * margin on all sides. Used by the plot pre-flight and runtime guards so we
+ * refuse to plot anything within `margin_mm` of the mechanical limit.
+ *
+ * Returns null if no envelope is configured (bounds checks disabled).
+ */
+export async function getEffectiveEnvelope(): Promise<{ envelope: Envelope; marginMm: number } | null> {
+  const envelope = await getMachineEnvelope()
+  if (!envelope) return null
+  const project = await loadProjectConfig()
+  const marginMm = project?.marginMm ?? DEFAULT_MARGIN_MM
+  return { envelope, marginMm }
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────

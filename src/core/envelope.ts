@@ -57,27 +57,38 @@ export function parseEnvelope(str: string): Envelope | null {
 
 /**
  * Check whether the given (x, y) position lies within the envelope,
- * counting (0,0) as the lower bound. Returns null if env is null
- * (no envelope configured → bounds check disabled).
+ * inset by `marginMm` on all sides (default 0 = no margin). Returns null if
+ * env is null (no envelope configured → bounds check disabled).
+ *
+ * (0, 0) is the lower bound, (envelope.widthMm, envelope.heightMm) the upper.
+ * With margin > 0, safe region is [margin, widthMm-margin] × [margin, heightMm-margin].
  */
-export function isInEnvelope(x: number, y: number, env: Envelope | null): boolean {
+export function isInEnvelope(
+  x: number, y: number,
+  env: Envelope | null,
+  marginMm = 0,
+): boolean {
   if (env === null) return true
-  const tol = 0.1  // mm — allow tiny float drift at the boundary
-  return x >= -tol && y >= -tol
-      && x <= env.widthMm + tol && y <= env.heightMm + tol
+  const tol = 0.1  // float-drift allowance at the boundary
+  return x >= marginMm - tol && y >= marginMm - tol
+      && x <= env.widthMm - marginMm + tol && y <= env.heightMm - marginMm + tol
 }
 
 /**
  * Walk a sequence of (x, y) positions and return the first out-of-bounds
  * point, or null if all points fit. `env === null` disables the check.
+ * `marginMm` inset applied to all edges.
  */
 export function findFirstOutOfBounds(
   points: { x: number; y: number }[],
   env: Envelope | null,
+  marginMm = 0,
 ): { index: number; point: { x: number; y: number } } | null {
   if (env === null) return null
   for (let i = 0; i < points.length; i++) {
-    if (!isInEnvelope(points[i].x, points[i].y, env)) return { index: i, point: points[i] }
+    if (!isInEnvelope(points[i].x, points[i].y, env, marginMm)) {
+      return { index: i, point: points[i] }
+    }
   }
   return null
 }

@@ -7,7 +7,7 @@ import { writeFile } from 'fs/promises'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import chalk from 'chalk'
-import { resolveProfile, loadProjectConfig, getMachineEnvelope } from '../core/config.ts'
+import { resolveProfile, loadProjectConfig, getEffectiveEnvelope } from '../core/config.ts'
 import { findFirstOutOfBounds } from '../core/envelope.ts'
 import { svgToMoves } from '../backends/svg-to-moves.ts'
 import { parseSvgLayers } from '../core/svg-layers.ts'
@@ -175,12 +175,17 @@ export const previewCmd = defineCommand({
     if (stats.fitsA3 !== null) fits.push(stats.fitsA3 ? chalk.green('A3 ✓') : chalk.dim('A3 ✗'))
     if (fits.length) rows.push(['Fits on', fits.join('  ')])
 
-    // Machine envelope (if configured) — the physical arm travel limit.
-    const envelope = await getMachineEnvelope()
-    if (envelope) {
+    // Machine envelope — the physical arm travel limit, minus the configured
+    // safety margin (`margin_mm` in axidraw.toml, default 5mm).
+    const eff = await getEffectiveEnvelope()
+    if (eff) {
       const moves = svgToMoves(processedSvg, { tolerance: 0.1 })
-      const offender = findFirstOutOfBounds(moves, envelope)
-      const label = `${envelope.widthMm} × ${envelope.heightMm} mm`
+      const offender = findFirstOutOfBounds(moves, eff.envelope, eff.marginMm)
+      const safeW = eff.envelope.widthMm  - 2 * eff.marginMm
+      const safeH = eff.envelope.heightMm - 2 * eff.marginMm
+      const label = eff.marginMm > 0
+        ? `${safeW} × ${safeH} mm safe (envelope ${eff.envelope.widthMm} × ${eff.envelope.heightMm}, ${eff.marginMm}mm margin)`
+        : `${eff.envelope.widthMm} × ${eff.envelope.heightMm} mm`
       if (offender) {
         rows.push([
           'Machine',

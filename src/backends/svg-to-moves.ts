@@ -12,6 +12,7 @@
 import { parseSync as parseSvg } from 'svgson'
 import { SVGPathData, SVGPathDataTransformer } from 'svg-pathdata'
 import { parseLayerAttrs } from '../core/svg-layers.ts'
+import { parseDimMm } from '../core/svg-units.ts'
 // SVGCommand is not re-exported from the top-level — import from the sub-path
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type SVGPathDataCommand = any
@@ -39,13 +40,19 @@ export function svgToMoves(svgContent: string, options: MovePlanOptions = {}): P
   const tol = options.tolerance ?? 0.1
   const root = parseSvg(svgContent)
 
-  // ── Coordinate scale: user-units → mm ─────────────────────────────────────
-  const scale = resolveScale(root)
+  // ── Coordinate scale + viewBox origin: user-units → mm, shifted so the
+  // viewport top-left corner = (0, 0) mm. Without the shift, SVGs with a
+  // non-zero viewBox origin (common when authors use the viewBox to express
+  // a page margin) would plot at negative coords and crash the envelope.
+  const { scale, vbX, vbY } = resolveScale(root)
+  // Bake the viewBox translation into the initial CTM so every downstream
+  // transform sees content in post-shift user units. Avoids threading an
+  // offset through every helper.
+  const initialCtm: Matrix = [1, 0, 0, 1, -vbX, -vbY]
 
   const moves: PlannerMove[] = [{ x: 0, y: 0, penDown: false }]
 
-  // ── Walk the SVG tree ──────────────────────────────────────────────────────
-  walkNode(root, IDENTITY, INITIAL_STYLE, scale, tol, options.layer ?? null, moves)
+  walkNode(root, initialCtm, INITIAL_STYLE, scale, tol, options.layer ?? null, moves)
 
   // Ensure we end pen-up
   if (moves.length > 0 && moves[moves.length - 1].penDown) {
@@ -57,39 +64,28 @@ export function svgToMoves(svgContent: string, options: MovePlanOptions = {}): P
 
 // ─── Coordinate scale resolution ─────────────────────────────────────────────
 
-function resolveScale(root: ReturnType<typeof parseSvg>): number {
+function resolveScale(root: ReturnType<typeof parseSvg>): { scale: number; vbX: number; vbY: number } {
   const vb = root.attributes['viewBox']
   const wAttr = root.attributes['width']
   const hAttr = root.attributes['height']
 
-  const widthMm  = parseDimMm(wAttr)
-  const heightMm = parseDimMm(hAttr)
-
-  if (vb && (widthMm !== null || heightMm !== null)) {
+  let vbX = 0, vbY = 0, vbW = 0, vbH = 0
+  if (vb) {
     const parts = vb.split(/[\s,]+/).map(Number)
     if (parts.length === 4 && parts.every(n => !isNaN(n))) {
-      const vbW = parts[2]
-      const vbH = parts[3]
-      if (vbW > 0 && widthMm !== null) return widthMm / vbW
-      if (vbH > 0 && heightMm !== null) return heightMm / vbH
+      vbX = parts[0]; vbY = parts[1]; vbW = parts[2]; vbH = parts[3]
     }
   }
 
-  // Assume 96 dpi (SVG spec default)
-  return 25.4 / 96
-}
+  const widthMm  = parseDimMm(wAttr)
+  const heightMm = parseDimMm(hAttr)
 
-function parseDimMm(v: string | undefined): number | null {
-  if (!v) return null
-  const m = v.match(/([\d.]+)(mm|cm|in|px)?/)
-  if (!m) return null
-  const n = parseFloat(m[1])
-  switch (m[2]) {
-    case 'cm': return n * 10
-    case 'in': return n * 25.4
-    case 'px': return n * (25.4 / 96)
-    default:   return n   // assume mm
-  }
+  let scale: number
+  if (vbW > 0 && widthMm !== null)       scale = widthMm / vbW
+  else if (vbH > 0 && heightMm !== null) scale = heightMm / vbH
+  else                                    scale = 25.4 / 96   // SVG spec fallback
+
+  return { scale, vbX, vbY }
 }
 
 // ─── 2D Affine matrix ─────────────────────────────────────────────────────────
@@ -164,11 +160,19 @@ interface SvgNode {
 interface StyleContext {
   display: 'inline' | 'none'
   visibility: 'visible' | 'hidden'
-  /** null = no stroke declared (defer to plot-if-drawable heuristic), 'none' = explicit skip */
+  /** null = not declared, 'none' = explicit skip, anything else = plot */
   stroke: string | null
+  /** null = not declared. Explicit non-none fill with no stroke means "filled
+   *  region, decorative" — plotters don't draw fills, so skip it. */
+  fill: string | null
 }
 
-const INITIAL_STYLE: StyleContext = { display: 'inline', visibility: 'visible', stroke: null }
+const INITIAL_STYLE: StyleContext = {
+  display: 'inline',
+  visibility: 'visible',
+  stroke: null,
+  fill: null,
+}
 
 /**
  * Parse relevant painting properties from an SVG element's own `style="..."`
@@ -188,9 +192,10 @@ function mergeStyle(parent: StyleContext, attrs: Record<string, string>): StyleC
       const key = rawKey?.trim()
       const val = rest.join(':').trim()
       if (!key || !val) continue
-      if (key === 'display')    next.display    = val === 'none' ? 'none' : 'inline'
+      if (key === 'display')         next.display    = val === 'none' ? 'none' : 'inline'
       else if (key === 'visibility') next.visibility = val === 'hidden' ? 'hidden' : 'visible'
       else if (key === 'stroke')     next.stroke     = val
+      else if (key === 'fill')       next.fill       = val
     }
   }
 
@@ -206,7 +211,22 @@ function mergeStyle(parent: StyleContext, attrs: Record<string, string>): StyleC
   const strokeAttr = attrs['stroke']
   if (strokeAttr) next.stroke = strokeAttr
 
+  const fillAttr = attrs['fill']
+  if (fillAttr) next.fill = fillAttr
+
   return next
+}
+
+/**
+ * Plotter skip rule: an element with an explicit non-none fill and no
+ * effective stroke is a decorative filled region — skip it. Matches axicli's
+ * convention. Elements with neither fill nor stroke declared fall through
+ * and plot (common in generative output that relies on SVG defaults).
+ */
+function isFillOnly(style: StyleContext): boolean {
+  const hasVisibleFill = style.fill !== null && style.fill !== 'none'
+  const hasVisibleStroke = style.stroke !== null && style.stroke !== 'none'
+  return hasVisibleFill && !hasVisibleStroke
 }
 
 function walkNode(
@@ -241,14 +261,18 @@ function walkNode(
   // Skip whole subtree if this element (or any ancestor) is non-displaying.
   if (merged.display === 'none' || merged.visibility === 'hidden') return
 
-  // Skip elements that explicitly have no stroke — for a plotter, stroke:none
-  // means "not drawn". This matches how most SVG-to-plotter pipelines behave.
-  // Groups without a stroke are fine (children may declare their own).
+  // Plotter skip rules for leaf drawable elements:
+  //   - explicit stroke:none → never plot
+  //   - explicit fill (non-none) with no stroke → decorative filled region
+  //
+  // Groups are not subject to either rule — their children may declare their
+  // own style and override inherited context.
   const name = node.name
   const isLeaf = name === 'path' || name === 'line' || name === 'rect'
               || name === 'circle' || name === 'ellipse'
               || name === 'polyline' || name === 'polygon'
   if (isLeaf && merged.stroke === 'none') return
+  if (isLeaf && isFillOnly(merged)) return
 
   if (name === 'path') {
     const d = node.attributes['d']

@@ -5,6 +5,7 @@
  */
 
 import { parse as parseSvg } from 'svgson'
+import { parseDimMm } from '../core/svg-units.ts'
 
 export interface SvgStats {
   pathCount: number
@@ -42,21 +43,8 @@ export async function getSvgStats(svgContent: string): Promise<SvgStats> {
     }
   }
 
-  const widthMm  = parseMmAttr(root.attributes['width'])
-  const heightMm = parseMmAttr(root.attributes['height'])
+  const widthMm  = parseDimMm(root.attributes['width'])
+  const heightMm = parseDimMm(root.attributes['height'])
 
   return { pathCount, layerIds, viewBox, widthMm, heightMm }
-}
-
-function parseMmAttr(val: string | undefined): number | null {
-  if (!val) return null
-  const m = val.match(/([\d.]+)(mm|cm|in|px)?/)
-  if (!m) return null
-  const n = parseFloat(m[1])
-  switch (m[2]) {
-    case 'cm': return n * 10
-    case 'in': return n * 25.4
-    case 'px': return n * 0.264583
-    default:   return n
-  }
 }

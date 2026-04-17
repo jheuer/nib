@@ -3,7 +3,7 @@ import { readFile } from 'fs/promises'
 import { existsSync } from 'fs'
 import { resolve } from 'path'
 import { homedir } from 'os'
-import { resolveProfile, loadProjectConfig, addProfileWear, penWearWarning, incrementSession, getMachineEnvelope } from '../core/config.ts'
+import { resolveProfile, loadProjectConfig, addProfileWear, penWearWarning, incrementSession, getMachineEnvelope, getEffectiveEnvelope } from '../core/config.ts'
 import { findFirstOutOfBounds } from '../core/envelope.ts'
 import { svgToMoves } from '../backends/svg-to-moves.ts'
 import { createJob } from '../core/job.ts'
@@ -182,17 +182,20 @@ export const plotCmd = defineCommand({
     // ── Pre-flight envelope check ────────────────────────────────────────────
     // If the user has configured a machine model or envelope, walk the SVG
     // moves and refuse to start if any point would drive the arm past its
-    // physical limit. Skipped when no envelope is configured.
+    // physical limit (minus the configured safety margin). Skipped when no
+    // envelope is configured.
     {
-      const envelope = await getMachineEnvelope()
-      if (envelope) {
+      const eff = await getEffectiveEnvelope()
+      if (eff) {
         const moves = svgToMoves(processedSvg, { tolerance: 0.1 })
-        const offender = findFirstOutOfBounds(moves, envelope)
+        const offender = findFirstOutOfBounds(moves, eff.envelope, eff.marginMm)
         if (offender) {
+          const safeW = eff.envelope.widthMm  - 2 * eff.marginMm
+          const safeH = eff.envelope.heightMm - 2 * eff.marginMm
           printError(
-            `SVG exceeds machine envelope (${envelope.widthMm} × ${envelope.heightMm} mm)`,
+            `SVG exceeds safe envelope (${safeW} × ${safeH} mm = machine minus ${eff.marginMm}mm margin)`,
             `point (${offender.point.x.toFixed(1)}, ${offender.point.y.toFixed(1)}) is outside bounds — ` +
-            `re-scale the SVG, pick a larger model, or clear axidraw.toml's envelope to disable the check`,
+            `re-scale the SVG, pick a larger model, lower margin_mm, or clear axidraw.toml's envelope`,
           )
           process.exit(1)
         }
@@ -354,10 +357,10 @@ export const plotCmd = defineCommand({
 
     try {
       const layerNum = args.layer !== undefined ? parseInt(args.layer, 10) : undefined
-      const envelope = (await getMachineEnvelope()) ?? undefined
+      const eff = await getEffectiveEnvelope()
       const result = await runJobEbb(
         job, emitter,
-        { port, layer: layerNum, envelope },
+        { port, layer: layerNum, envelope: eff?.envelope, marginMm: eff?.marginMm },
         controller.signal,
       )
 

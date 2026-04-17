@@ -272,6 +272,7 @@ export class EBBBackend implements PlotBackend {
     const copies = Math.max(1, options.copies ?? 1)
     const pageDelayMs = Math.max(0, (options.pageDelayS ?? 0) * 1000)
     const envelope = options.envelope ?? null
+    const marginMm = options.marginMm ?? 0
 
     await this.ebb.configureServo(profile.penPosUp, profile.penPosDown)
     await this.ebb.setServoTimeout(60_000)
@@ -309,7 +310,7 @@ export class EBBBackend implements PlotBackend {
         // Pen-up travel: single move, rest-to-rest. Just navigate to the next
         // position and advance the index.
         if (!move.penDown) {
-          if (!isInEnvelope(move.x, move.y, envelope)) {
+          if (!isInEnvelope(move.x, move.y, envelope, marginMm)) {
             await this.safeAbort(emitter, i, moves.length, copy, copies,
               `envelope violation: travel target (${move.x.toFixed(1)}, ${move.y.toFixed(1)}) is outside machine bounds`)
             return { stoppedAt: (copy + i / moves.length) / copies, aborted: true }
@@ -424,6 +425,8 @@ export interface RunJobOptions {
   pageDelayS?: number
   /** Machine envelope — target positions outside this rectangle abort the job. */
   envelope?: Envelope
+  /** Safety inset from the envelope (mm, all sides). Default 0. */
+  marginMm?: number
 }
 
 export interface EbbPlotOptions extends RunJobOptions {
@@ -474,6 +477,7 @@ export async function runJobEbb(
       startFrom: options.startFrom,
       pageDelayS: options.pageDelayS,
       envelope: options.envelope,
+      marginMm: options.marginMm,
     })
   } finally {
     if (ownsTransport) {
