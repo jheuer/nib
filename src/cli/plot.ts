@@ -6,6 +6,7 @@ import { homedir } from 'os'
 import { resolveProfile, loadProjectConfig, addProfileWear, penWearWarning, incrementSession, getMachineEnvelope, getEffectiveEnvelope } from '../core/config.ts'
 import { findFirstOutOfBounds } from '../core/envelope.ts'
 import { svgToMoves } from '../backends/svg-to-moves.ts'
+import { rotateMoves } from '../core/stroke.ts'
 import { createJob } from '../core/job.ts'
 import { nextJobId, saveJob } from '../core/history.ts'
 import { PlotEmitter } from '../core/events.ts'
@@ -64,6 +65,10 @@ export const plotCmd = defineCommand({
     simplify: {
       type: 'string',
       description: 'Douglas-Peucker polyline simplification tolerance in mm (e.g. 0.2). 0 = off. Overrides axidraw.toml.',
+    },
+    rotate: {
+      type: 'string',
+      description: 'Rotate content by N degrees (90 / 180 / 270) before plotting. Applied around bbox center.',
     },
     guided: {
       type: 'boolean',
@@ -191,7 +196,9 @@ export const plotCmd = defineCommand({
     {
       const eff = await getEffectiveEnvelope()
       if (eff) {
-        const moves = svgToMoves(processedSvg, { tolerance: 0.1 })
+        const preflightRotate = args.rotate !== undefined ? parseFloat(args.rotate) : 0
+        const rawPreflight = svgToMoves(processedSvg, { tolerance: 0.1 })
+        const moves = preflightRotate ? rotateMoves(rawPreflight, preflightRotate) : rawPreflight
         const offender = findFirstOutOfBounds(moves, eff.envelope, eff.marginMm)
         if (offender) {
           const safeW = eff.envelope.widthMm  - 2 * eff.marginMm
@@ -365,6 +372,7 @@ export const plotCmd = defineCommand({
       const simplifyMm = args.simplify !== undefined
         ? parseFloat(args.simplify)
         : projectConfig?.simplifyMm
+      const rotateDeg = args.rotate !== undefined ? parseFloat(args.rotate) : 0
       const result = await runJobEbb(
         job, emitter,
         {
@@ -373,6 +381,7 @@ export const plotCmd = defineCommand({
           envelope: eff?.envelope,
           marginMm: eff?.marginMm,
           simplifyMm,
+          rotateDeg,
         },
         controller.signal,
       )

@@ -63,6 +63,10 @@ export const previewCmd = defineCommand({
       type: 'string',
       description: 'Douglas-Peucker polyline simplification tolerance in mm (e.g. 0.2).',
     },
+    rotate: {
+      type: 'string',
+      description: 'Rotate content by N degrees (90 / 180 / 270) before computing stats.',
+    },
   },
   async run({ args }) {
     const profileName = args.profile ?? process.env.NIB_PROFILE
@@ -142,7 +146,8 @@ export const previewCmd = defineCommand({
     const simplifyMm = args.simplify !== undefined
       ? parseFloat(args.simplify)
       : projectConfig?.simplifyMm
-    const stats = previewStatsFromSvg(processedSvg, profile, job.optimize, simplifyMm)
+    const rotateDeg = args.rotate !== undefined ? parseFloat(args.rotate) : 0
+    const stats = previewStatsFromSvg(processedSvg, profile, job.optimize, simplifyMm, rotateDeg)
 
     if (args.json) {
       process.stdout.write(JSON.stringify({ ...stats, svgStats }, null, 2) + '\n')
@@ -186,7 +191,8 @@ export const previewCmd = defineCommand({
     // safety margin (`margin_mm` in axidraw.toml, default 5mm).
     const eff = await getEffectiveEnvelope()
     if (eff) {
-      const moves = svgToMoves(processedSvg, { tolerance: 0.1 })
+      const rawEnv = svgToMoves(processedSvg, { tolerance: 0.1 })
+      const moves = rotateDeg ? (await import('../core/stroke.ts')).rotateMoves(rawEnv, rotateDeg) : rawEnv
       const offender = findFirstOutOfBounds(moves, eff.envelope, eff.marginMm)
       const safeW = eff.envelope.widthMm  - 2 * eff.marginMm
       const safeH = eff.envelope.heightMm - 2 * eff.marginMm

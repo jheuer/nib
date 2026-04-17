@@ -21,7 +21,7 @@ import {
 } from './ebb-protocol.ts'
 import type { EbbTransport } from './transport.ts'
 import { svgToMoves, type PlannerMove } from './svg-to-moves.ts'
-import { strokesToMoves, simplifyMoves, type Stroke } from '../core/stroke.ts'
+import { strokesToMoves, simplifyMoves, rotateMoves, type Stroke } from '../core/stroke.ts'
 import { reorder, type OptimizeLevel } from '../core/reorder.ts'
 import { planMove, planStroke, optionsForProfile } from '../core/planner.ts'
 import { isInEnvelope, type Envelope } from '../core/envelope.ts'
@@ -306,12 +306,13 @@ export class EBBBackend implements PlotBackend {
     if (rawMoves.length === 0) {
       return { stoppedAt: 1, aborted: false }
     }
-    // Simplify first (fewer points per stroke) → reorder (fewer strokes to
-    // compare) → plan. Simplify before reorder because reorder treats each
-    // stroke as an atomic unit; reducing internal points doesn't change its
-    // endpoints. Order is preserved.
+    // Pipeline: rotate → simplify → reorder → plan. Rotate first so
+    // orientation doesn't affect subsequent geometry decisions. Simplify
+    // before reorder because reorder treats each stroke as atomic;
+    // reducing internal points doesn't change endpoints.
+    const rotated = options.rotateDeg ? rotateMoves(rawMoves, options.rotateDeg) : rawMoves
     const simplifyMm = options.simplifyMm ?? 0
-    const simplified = simplifyMm > 0 ? simplifyMoves(rawMoves, simplifyMm) : rawMoves
+    const simplified = simplifyMm > 0 ? simplifyMoves(rotated, simplifyMm) : rotated
     const { moves } = reorder(simplified, options.optimize ?? 0)
 
     const speedDown = percentToMms(profile.speedPendown, true)
@@ -466,6 +467,13 @@ export interface RunJobOptions {
    * planning. 0 disables. 0.1–0.3 typical for over-sampled SVGs.
    */
   simplifyMm?: number
+  /**
+   * Rotate content by this many degrees (90 / 180 / 270) before planning.
+   * Applied BEFORE simplify/reorder. Useful for paper-orientation fit and
+   * for diagnostic re-plots that isolate hardware- vs content-specific
+   * artifacts (compare same SVG at 0° vs 90°).
+   */
+  rotateDeg?: number
 }
 
 export interface EbbPlotOptions extends RunJobOptions {
@@ -518,6 +526,7 @@ export async function runJobEbb(
       envelope: options.envelope,
       marginMm: options.marginMm,
       simplifyMm: options.simplifyMm,
+      rotateDeg: options.rotateDeg,
     })
   } finally {
     if (ownsTransport) {

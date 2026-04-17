@@ -16,7 +16,7 @@ import type { ResolvedProfile } from '../core/job.ts'
 import type { PreviewStats } from './types.ts'
 import { planMove, planStroke, optionsForProfile } from '../core/planner.ts'
 import { reorder, type OptimizeLevel } from '../core/reorder.ts'
-import { simplifyMoves } from '../core/stroke.ts'
+import { simplifyMoves, rotateMoves } from '../core/stroke.ts'
 
 // ─── Public API ───────────────────────────────────────────────────────────────
 
@@ -32,9 +32,11 @@ export function previewStatsFromSvg(
   profile: ResolvedProfile,
   optimize: OptimizeLevel = 0,
   simplifyMm = 0,
+  rotateDeg = 0,
 ): PreviewStats {
   const raw = svgToMoves(svg, { tolerance: 0.05 })
-  const simplified = simplifyMm > 0 ? simplifyMoves(raw, simplifyMm) : raw
+  const rotated = rotateDeg ? rotateMoves(raw, rotateDeg) : raw
+  const simplified = simplifyMm > 0 ? simplifyMoves(rotated, simplifyMm) : rotated
   const { moves } = reorder(simplified, optimize)
   return previewStatsFromMoves(moves, profile)
 }

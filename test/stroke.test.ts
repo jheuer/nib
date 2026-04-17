@@ -1,8 +1,9 @@
 import { describe, it, expect } from 'bun:test'
 import {
-  strokesToMoves, movesToStrokes, strokeStats,
+  strokesToMoves, movesToStrokes, strokeStats, rotateMoves,
   type Stroke,
 } from '../src/core/stroke.ts'
+import type { PlannerMove } from '../src/backends/svg-to-moves.ts'
 
 describe('strokesToMoves', () => {
   it('empty list → just the origin pen-up', () => {
@@ -102,5 +103,61 @@ describe('strokeStats', () => {
 
   it('empty list → null bbox', () => {
     expect(strokeStats([]).bbox).toBeNull()
+  })
+})
+
+describe('rotateMoves', () => {
+  const L: PlannerMove[] = [
+    { x: 0,  y: 0,  penDown: false },
+    { x: 10, y: 0,  penDown: true },
+    { x: 10, y: 20, penDown: true },
+  ]
+
+  it('0° is a no-op', () => {
+    expect(rotateMoves(L, 0)).toBe(L)
+  })
+
+  it('90° swaps axes and re-anchors bbox to (0,0)', () => {
+    const out = rotateMoves(L, 90)
+    // Content width changes from 10 → 20, height 20 → 10 (swap).
+    const xs = out.map(m => m.x); const ys = out.map(m => m.y)
+    expect(Math.min(...xs)).toBeCloseTo(0, 4)
+    expect(Math.min(...ys)).toBeCloseTo(0, 4)
+    expect(Math.max(...xs)).toBeCloseTo(20, 4)
+    expect(Math.max(...ys)).toBeCloseTo(10, 4)
+  })
+
+  it('preserves penDown flags', () => {
+    const out = rotateMoves(L, 90)
+    expect(out.map(m => m.penDown)).toEqual([false, true, true])
+  })
+
+  it('180° negates both axes, then re-anchors', () => {
+    const out = rotateMoves(L, 180)
+    // Content still 10×20 but reflected
+    const xs = out.map(m => m.x); const ys = out.map(m => m.y)
+    expect(Math.min(...xs)).toBeCloseTo(0, 4)
+    expect(Math.max(...xs)).toBeCloseTo(10, 4)
+    expect(Math.min(...ys)).toBeCloseTo(0, 4)
+    expect(Math.max(...ys)).toBeCloseTo(20, 4)
+  })
+
+  it('360° returns to original (up to tiny float drift)', () => {
+    const out = rotateMoves(L, 360)
+    // Normalised: 360 % 360 == 0, so it's a no-op.
+    expect(out).toBe(L)
+  })
+
+  it('negative degrees normalise the same as positive', () => {
+    const pos = rotateMoves(L, 90)
+    const neg = rotateMoves(L, -270)
+    for (let i = 0; i < pos.length; i++) {
+      expect(neg[i].x).toBeCloseTo(pos[i].x, 4)
+      expect(neg[i].y).toBeCloseTo(pos[i].y, 4)
+    }
+  })
+
+  it('empty input passes through', () => {
+    expect(rotateMoves([], 90)).toEqual([])
   })
 })

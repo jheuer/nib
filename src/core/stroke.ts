@@ -96,6 +96,40 @@ export function movesToStrokes(moves: PlannerMove[]): Stroke[] {
 // ─── Stats (pure, browser-safe) ──────────────────────────────────────────────
 
 /**
+ * Rotate a flat PlannerMove sequence by `degrees` around its bounding-box
+ * center, then translate so the rotated bbox sits at (0, 0).
+ *
+ * Useful as a diagnostic (plot the same content at a different orientation
+ * to isolate hardware- vs content-specific artifacts) and for fitting
+ * portrait SVGs onto landscape paper without editing the source.
+ */
+export function rotateMoves(moves: PlannerMove[], degrees: number): PlannerMove[] {
+  const normDeg = ((degrees % 360) + 360) % 360
+  if (normDeg === 0) return moves
+  const theta = (normDeg * Math.PI) / 180
+  const cos = Math.cos(theta)
+  const sin = Math.sin(theta)
+
+  // Rotate around (0, 0), then translate the result's bbox back to (0, 0).
+  // Two-pass: compute new bbox, then emit translated moves.
+  let minX = Infinity, minY = Infinity
+  const rotated: PlannerMove[] = []
+  for (const m of moves) {
+    const rx = m.x * cos - m.y * sin
+    const ry = m.x * sin + m.y * cos
+    if (rx < minX) minX = rx
+    if (ry < minY) minY = ry
+    rotated.push({ x: rx, y: ry, penDown: m.penDown })
+  }
+  if (!isFinite(minX)) return rotated
+  for (const m of rotated) {
+    m.x -= minX
+    m.y -= minY
+  }
+  return rotated
+}
+
+/**
  * Simplify a flat PlannerMove sequence via stroke-level Douglas–Peucker.
  * Groups consecutive pen-down moves into strokes, simplifies each stroke's
  * interior at the given tolerance, and re-emits the flat move list.
