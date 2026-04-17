@@ -130,6 +130,16 @@ export function rotateMoves(moves: PlannerMove[], degrees: number): PlannerMove[
 }
 
 /**
+ * Translate every move by (dx, dy). No-op when both are zero. Used to shift
+ * content into paper-space when a paper offset is configured — SVG (0,0) then
+ * corresponds to the paper's top-left corner instead of the machine origin.
+ */
+export function translateMoves(moves: PlannerMove[], dx: number, dy: number): PlannerMove[] {
+  if (dx === 0 && dy === 0) return moves
+  return moves.map(m => ({ x: m.x + dx, y: m.y + dy, penDown: m.penDown }))
+}
+
+/**
  * Simplify a flat PlannerMove sequence via stroke-level Douglas–Peucker.
  * Groups consecutive pen-down moves into strokes, simplifies each stroke's
  * interior at the given tolerance, and re-emits the flat move list.

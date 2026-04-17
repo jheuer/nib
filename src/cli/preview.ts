@@ -90,6 +90,11 @@ export const previewCmd = defineCommand({
       type: 'string',
       description: 'CSS colour for the paper sheet in the --open preview (default: cream #fdfcf7).',
     },
+    'machine-origin': {
+      type: 'boolean',
+      description: 'Treat SVG (0,0) as machine home instead of auto-shifting to paper origin when paper_offset is set. Off by default.',
+      default: false,
+    },
   },
   async run({ args }) {
     const profileName = args.profile ?? process.env.NIB_PROFILE
@@ -188,7 +193,19 @@ export const previewCmd = defineCommand({
       printError((err as Error).message)
       process.exit(2)
     }
-    const stats = previewStatsFromSvg(processedSvg, profile, job.optimize, simplifyMm, rotateDeg)
+    // Resolve paper early so the translate-to-paper shift applies to stats,
+    // envelope-fit checks, and the browser preview identically.
+    const paper = resolvePaper({
+      size:        args.paper                              ?? projectConfig?.paper,
+      orientation: (args['paper-orientation'] as 'portrait' | 'landscape' | undefined)
+                     ?? projectConfig?.paperOrientation,
+      offset:      args['paper-offset']                    ?? projectConfig?.paperOffset,
+      color:       args['paper-color']                     ?? projectConfig?.paperColor,
+    })
+    const translateMm = (!args['machine-origin'] && paper && (paper.offsetXMm || paper.offsetYMm))
+      ? { x: paper.offsetXMm, y: paper.offsetYMm }
+      : { x: 0, y: 0 }
+    const stats = previewStatsFromSvg(processedSvg, profile, job.optimize, simplifyMm, rotateDeg, translateMm)
 
     if (args.json) {
       process.stdout.write(JSON.stringify({ ...stats, svgStats }, null, 2) + '\n')
@@ -266,14 +283,6 @@ export const previewCmd = defineCommand({
 
     // ── Open browser preview ──────────────────────────────────────────────────
     if (args.open) {
-      // Resolve paper: CLI flags override axidraw.toml.
-      const paper = resolvePaper({
-        size:        args.paper                                ?? projectConfig?.paper,
-        orientation: (args['paper-orientation'] as 'portrait' | 'landscape' | undefined)
-                       ?? projectConfig?.paperOrientation,
-        offset:      args['paper-offset']                      ?? projectConfig?.paperOffset,
-        color:       args['paper-color']                       ?? projectConfig?.paperColor,
-      })
       await openBrowserPreview(processedSvg, name, {
         nibSizeMm: profile.nibSizeMm,
         color: profile.color,
@@ -283,6 +292,7 @@ export const previewCmd = defineCommand({
         marginMm: args['hide-envelope'] ? undefined : envEarly?.marginMm,
         rotateDeg,
         paper,
+        translateMm,
       })
     }
   },
@@ -297,6 +307,7 @@ interface PreviewOpts {
   marginMm?: number
   rotateDeg: number
   paper: ResolvedPaper | null
+  translateMm: { x: number; y: number }
 }
 
 /**
@@ -444,7 +455,7 @@ async function openBrowserPreview(
        height="${showEnvelope ? envH + padTop + padBottom : rotatedH}mm"
        style="max-width:90vw;max-height:90vh">
     ${envelopeOverlay}
-    <g class="user-content" transform="${rotateTransform}">
+    <g class="user-content" transform="translate(${opts.translateMm.x} ${opts.translateMm.y}) ${rotateTransform}">
       <svg x="0" y="0" width="${cw}" height="${ch}" viewBox="${userViewBox}" preserveAspectRatio="xMinYMin meet">
         ${userInner}
       </svg>

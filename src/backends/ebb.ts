@@ -21,7 +21,7 @@ import {
 } from './ebb-protocol.ts'
 import type { EbbTransport } from './transport.ts'
 import { svgToMoves, type PlannerMove } from './svg-to-moves.ts'
-import { strokesToMoves, simplifyMoves, rotateMoves, type Stroke } from '../core/stroke.ts'
+import { strokesToMoves, simplifyMoves, rotateMoves, translateMoves, type Stroke } from '../core/stroke.ts'
 import { reorder, type OptimizeLevel } from '../core/reorder.ts'
 import { planMove, planStroke, optionsForProfile } from '../core/planner.ts'
 import { isInEnvelope, type Envelope } from '../core/envelope.ts'
@@ -431,8 +431,11 @@ export class EBBBackend implements PlotBackend {
     // before reorder because reorder treats each stroke as atomic;
     // reducing internal points doesn't change endpoints.
     const rotated = options.rotateDeg ? rotateMoves(rawMoves, options.rotateDeg) : rawMoves
+    const translated = options.translateMm
+      ? translateMoves(rotated, options.translateMm.x, options.translateMm.y)
+      : rotated
     const simplifyMm = options.simplifyMm ?? 0
-    const simplified = simplifyMm > 0 ? simplifyMoves(rotated, simplifyMm) : rotated
+    const simplified = simplifyMm > 0 ? simplifyMoves(translated, simplifyMm) : translated
     const { moves } = reorder(simplified, options.optimize ?? 0)
 
     const speedDown = percentToMms(profile.speedPendown, true)
@@ -594,6 +597,13 @@ export interface RunJobOptions {
    * artifacts (compare same SVG at 0° vs 90°).
    */
   rotateDeg?: number
+  /**
+   * Translate content by (x, y) mm AFTER rotation, BEFORE simplify/reorder.
+   * Used to shift the SVG origin into paper space when the paper is not
+   * cornered at machine home: (paperOffsetX, paperOffsetY) makes SVG (0,0)
+   * land at the paper's top-left instead of the machine's.
+   */
+  translateMm?: { x: number; y: number }
 }
 
 export interface EbbPlotOptions extends RunJobOptions {
@@ -655,6 +665,7 @@ export async function runJobEbb(
       marginMm: options.marginMm,
       simplifyMm: options.simplifyMm,
       rotateDeg: options.rotateDeg,
+      translateMm: options.translateMm,
     })
   } finally {
     if (ownsTransport) {

@@ -10,6 +10,7 @@ import { findFirstOutOfBounds } from '../core/envelope.ts'
 import { svgToMoves } from '../backends/svg-to-moves.ts'
 import { rotateMoves } from '../core/stroke.ts'
 import { resolveAutoRotate } from '../core/auto-rotate.ts'
+import { resolvePaper } from '../core/paper.ts'
 import { createJob } from '../core/job.ts'
 import { nextJobId, saveJob } from '../core/history.ts'
 import { PlotEmitter } from '../core/events.ts'
@@ -72,6 +73,23 @@ export const plotCmd = defineCommand({
     rotate: {
       type: 'string',
       description: 'Rotate content before plotting. "auto" (default) fits portrait SVGs to landscape machines and vice-versa. Use "none" to disable, or a number of degrees for explicit rotation.',
+    },
+    paper: {
+      type: 'string',
+      description: 'Paper size ("A4"/"A3"/"letter"/WxH mm). Used together with --paper-offset to shift content into paper space. Overrides axidraw.toml.',
+    },
+    'paper-orientation': {
+      type: 'string',
+      description: 'Force paper orientation: "portrait" or "landscape".',
+    },
+    'paper-offset': {
+      type: 'string',
+      description: 'Paper offset from home corner as "X,Y" in mm (default 0,0). Non-zero offsets auto-shift content into paper space; disable with --machine-origin.',
+    },
+    'machine-origin': {
+      type: 'boolean',
+      description: 'Treat SVG (0,0) as machine home even when paper_offset is non-zero. Off by default.',
+      default: false,
     },
     guided: {
       type: 'boolean',
@@ -239,6 +257,21 @@ export const plotCmd = defineCommand({
       process.exit(2)
     }
 
+    // ── Resolve paper → translate-to-paper shift ─────────────────────────────
+    const paper = resolvePaper({
+      size:        args.paper                              ?? projectConfig?.paper,
+      orientation: (args['paper-orientation'] as 'portrait' | 'landscape' | undefined)
+                     ?? projectConfig?.paperOrientation,
+      offset:      args['paper-offset']                    ?? projectConfig?.paperOffset,
+      color:       projectConfig?.paperColor,  // plot doesn't expose --paper-color (no preview)
+    })
+    const translateMm = (!args['machine-origin'] && paper && (paper.offsetXMm || paper.offsetYMm))
+      ? { x: paper.offsetXMm, y: paper.offsetYMm }
+      : { x: 0, y: 0 }
+    if (translateMm.x || translateMm.y) {
+      process.stderr.write(`  ${chalk.dim('Paper offset:')}  (${translateMm.x}, ${translateMm.y}) mm ${chalk.dim('— content shifted into paper space. Disable with --machine-origin.')}\n`)
+    }
+
     // ── Pre-flight envelope check ────────────────────────────────────────────
     // If the user has configured a machine model or envelope, walk the SVG
     // moves and refuse to start if any point would drive the arm past its
@@ -246,7 +279,10 @@ export const plotCmd = defineCommand({
     // envelope is configured.
     if (eff) {
       const rawPreflight = svgToMoves(processedSvg, { tolerance: 0.1 })
-      const moves = rotateDeg ? rotateMoves(rawPreflight, rotateDeg) : rawPreflight
+      const rotatedPreflight = rotateDeg ? rotateMoves(rawPreflight, rotateDeg) : rawPreflight
+      const moves = (translateMm.x || translateMm.y)
+        ? rotatedPreflight.map(m => ({ x: m.x + translateMm.x, y: m.y + translateMm.y, penDown: m.penDown }))
+        : rotatedPreflight
       const offender = findFirstOutOfBounds(moves, eff.envelope, eff.marginMm)
       if (offender) {
         const safeW = eff.envelope.widthMm  - 2 * eff.marginMm
@@ -435,6 +471,7 @@ export const plotCmd = defineCommand({
           marginMm: eff?.marginMm,
           simplifyMm,
           rotateDeg,
+          translateMm,
         },
         controller.signal,
       )
