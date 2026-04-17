@@ -54,7 +54,13 @@ export class EBBBackend implements PlotBackend {
       this.useLm = false
     }
 
-    await this.ebb.penUp()
+    // Enable motors now; DO NOT penUp yet. At connect-time we have no profile,
+    // so we can't fire the S2 servo-position safety net — a lone SP,0 against
+    // the firmware's stale SC,4 value risks leaving the pen on the paper for
+    // the ~500ms until runMoves.penUp finally lifts it. That interval shows
+    // as an ink dot at (0,0). Deferring all servo control to runMoves (where
+    // configureServo runs BEFORE penUp) eliminates the undefined pen-state
+    // window entirely.
     await this.ebb.enableMotors(1, 1)  // 1/16 microstepping (EM=1, not 5)
   }
 
