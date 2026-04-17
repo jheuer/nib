@@ -235,7 +235,7 @@ export async function penWearWarning(name: string, expectedM: number): Promise<s
 // ─── Profile serialization ────────────────────────────────────────────────────
 
 function deserializeProfile(raw: Record<string, unknown>): Profile {
-  return {
+  const profile: Profile = {
     speedPendown: (raw['speed_pendown'] as number) ?? 25,
     speedPenup: (raw['speed_penup'] as number) ?? 75,
     penPosDown: (raw['pen_pos_down'] as number) ?? 40,
@@ -244,6 +244,12 @@ function deserializeProfile(raw: Record<string, unknown>): Profile {
     constSpeed: raw['const_speed'] as boolean | undefined,
     description: raw['description'] as string | undefined,
   }
+  if (typeof raw['speed_cap_mms']        === 'number') profile.speedCapMms        = raw['speed_cap_mms'] as number
+  if (typeof raw['speed_cap_up_mms']     === 'number') profile.speedCapUpMms     = raw['speed_cap_up_mms'] as number
+  if (typeof raw['accel_cap_mms2']       === 'number') profile.accelCapMms2       = raw['accel_cap_mms2'] as number
+  if (typeof raw['junction_deviation_mm']=== 'number') profile.junctionDeviationMm= raw['junction_deviation_mm'] as number
+  if (typeof raw['servo_idle_ms']        === 'number') profile.servoIdleMs        = raw['servo_idle_ms'] as number
+  return profile
 }
 
 function serializeProfile(profile: Profile): Record<string, unknown> {
@@ -256,6 +262,11 @@ function serializeProfile(profile: Profile): Record<string, unknown> {
   }
   if (profile.constSpeed !== undefined) out['const_speed'] = profile.constSpeed
   if (profile.description) out['description'] = profile.description
+  if (profile.speedCapMms         !== undefined) out['speed_cap_mms']         = profile.speedCapMms
+  if (profile.speedCapUpMms       !== undefined) out['speed_cap_up_mms']      = profile.speedCapUpMms
+  if (profile.accelCapMms2        !== undefined) out['accel_cap_mms2']        = profile.accelCapMms2
+  if (profile.junctionDeviationMm !== undefined) out['junction_deviation_mm'] = profile.junctionDeviationMm
+  if (profile.servoIdleMs         !== undefined) out['servo_idle_ms']         = profile.servoIdleMs
   return out
 }
 

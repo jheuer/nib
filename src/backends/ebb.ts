@@ -293,7 +293,7 @@ export class EBBBackend implements PlotBackend {
     const marginMm = options.marginMm ?? 0
 
     await this.ebb.configureServo(profile.penPosUp, profile.penPosDown)
-    await this.ebb.setServoTimeout(60_000)
+    await this.ebb.setServoTimeout(profile.servoIdleMs ?? 60_000)
     await this.ebb.penUp()
     this.penIsDown = false
 

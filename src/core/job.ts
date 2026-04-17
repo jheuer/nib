@@ -8,6 +8,26 @@ export interface Profile {
   accel: number           // 1–100, percent
   constSpeed?: boolean
   description?: string
+
+  // ── Per-profile tuning caps (optional) ───────────────────────────────────
+  // Override the library-wide defaults when a given pen + paper combo can
+  // safely handle more (or less) than the conservative global numbers.
+  // Discoverable via `nib calibrate speed <profile>`.
+  //
+  // When set, these replace the global LM_SPEED_PENDOWN_MAX_MMS /
+  // LM_SPEED_PENUP_MAX_MMS / ACCEL_MAX_MMS2 constants for THIS profile.
+  // `speedPendown` / `speedPenup` / `accel` percentages are then applied
+  // against the profile's caps instead of the library defaults.
+  /** Max pen-down cruise speed in mm/s. Default: LM_SPEED_PENDOWN_MAX_MMS (50). */
+  speedCapMms?: number
+  /** Max pen-up cruise speed in mm/s. Default: LM_SPEED_PENUP_MAX_MMS (100). */
+  speedCapUpMms?: number
+  /** Max cartesian acceleration in mm/s². Default: ACCEL_MAX_MMS2 (2000). */
+  accelCapMms2?: number
+  /** Junction-deviation tolerance in mm for corner-smoothing. Default: 0.05. */
+  junctionDeviationMm?: number
+  /** Servo idle timeout in ms before power-off. Default: 60000 (quiet=5000). */
+  servoIdleMs?: number
 }
 
 export interface ResolvedProfile extends Profile {

@@ -80,6 +80,8 @@ export interface PlanOptions {
   /** minimum starting rate (steps/s per axis). Must be > 0 so the LM axis
    *  accumulator actually ticks; set low (2–5 steps/s) so accel is visible. */
   minRateStepsPerSec?: number
+  /** Junction deviation in mm. Default JUNCTION_DEVIATION_MM (0.05). */
+  junctionDeviationMm?: number
 }
 
 // ─── Trapezoid geometry ───────────────────────────────────────────────────────
@@ -253,12 +255,14 @@ export function planMove(
 // ─── Stroke planner (junction velocities) ───────────────────────────────────
 
 /**
- * Junction deviation — how far the actual path is allowed to deviate from
- * the ideal sharp corner when cornering under the given acceleration.
+ * Default junction deviation — how far the actual path is allowed to deviate
+ * from the ideal sharp corner when cornering under the given acceleration.
  * Larger = faster cornering, smaller = more accurate but slower.
  * 0.05 mm is conservative; Marlin's default is 0.013 mm, Prusa's is 0.1.
+ *
+ * Overridable per-stroke via PlanOptions.junctionDeviationMm.
  */
-const JUNCTION_DEVIATION_MM = 0.05
+export const JUNCTION_DEVIATION_MM = 0.05
 
 export interface Segment {
   /** endpoint X in mm */
@@ -296,8 +300,9 @@ export function planStroke(points: Segment[], options: PlanOptions): PlannedMove
   const vJunction: number[] = new Array(n)
   vJunction[n - 1] = 0  // end at rest
 
+  const devMm = options.junctionDeviationMm ?? JUNCTION_DEVIATION_MM
   for (let i = 0; i < n - 1; i++) {
-    vJunction[i] = junctionSpeed(segs[i], segs[i + 1], options.accel)
+    vJunction[i] = junctionSpeed(segs[i], segs[i + 1], options.accel, devMm)
     if (vJunction[i] > options.vMax) vJunction[i] = options.vMax
   }
 
@@ -349,14 +354,14 @@ function junctionSpeed(
   a: { dx: number; dy: number; dist: number },
   b: { dx: number; dy: number; dist: number },
   accel: number,
+  deviationMm: number,
 ): number {
   if (a.dist < 1e-9 || b.dist < 1e-9) return 0
   const cosTheta = (a.dx * b.dx + a.dy * b.dy) / (a.dist * b.dist)
-  // Clamp into [-1, 1] — small floating-point drift could push it outside.
   const c = Math.max(-1, Math.min(1, cosTheta))
-  if (c <= -1 + 1e-9) return 0             // near-reversal: must stop
-  if (c >= 1 - 1e-9)  return Infinity      // near-straight: unconstrained
-  const num = accel * JUNCTION_DEVIATION_MM * (1 + c)
+  if (c <= -1 + 1e-9) return 0
+  if (c >= 1 - 1e-9)  return Infinity
+  const num = accel * deviationMm * (1 + c)
   const den = 1 - c
   return Math.sqrt(num / den)
 }
@@ -368,15 +373,24 @@ import { LM_SPEED_PENDOWN_MAX_MMS, LM_SPEED_PENUP_MAX_MMS, ACCEL_MAX_MMS2 } from
 
 /**
  * Resolve plan options for a profile, for pen-down or pen-up motion.
+ *
+ * Profile percentages (speedPendown, speedPenup, accel) are applied against
+ * per-profile caps when set, falling back to the library-wide conservative
+ * defaults. This lets `nib calibrate speed` discover safe caps for a specific
+ * pen + paper + rig and pin them in the profile.
  */
 export function optionsForProfile(profile: ResolvedProfile, penDown: boolean): PlanOptions {
-  const vMax = penDown
-    ? (profile.speedPendown / 100) * LM_SPEED_PENDOWN_MAX_MMS
-    : (profile.speedPenup   / 100) * LM_SPEED_PENUP_MAX_MMS
-  const accel = (profile.accel / 100) * ACCEL_MAX_MMS2
+  const downCap  = profile.speedCapMms    ?? LM_SPEED_PENDOWN_MAX_MMS
+  const upCap    = profile.speedCapUpMms  ?? LM_SPEED_PENUP_MAX_MMS
+  const accelCap = profile.accelCapMms2   ?? ACCEL_MAX_MMS2
+
+  const vMax  = penDown ? (profile.speedPendown / 100) * downCap
+                        : (profile.speedPenup   / 100) * upCap
+  const accel = (profile.accel / 100) * accelCap
   return {
     vMax: Math.max(1, vMax),
     accel: Math.max(100, accel),
+    junctionDeviationMm: profile.junctionDeviationMm,
   }
 }
 

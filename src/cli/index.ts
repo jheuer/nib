@@ -9,6 +9,7 @@ import { profileCmd } from './profile.ts'
 import { jobCmd } from './job.ts'
 import { seriesCmd } from './series.ts'
 import { calibrateCmd } from './calibrate.ts'
+import { calibrateSpeedCmd } from './calibrate-speed.ts'
 import { loadGlobalConfig, saveGlobalConfig, getProfile, resolveProfile } from '../core/config.ts'
 import { SPEED_PENUP_MAX_MMS } from '../backends/ebb-protocol.ts'
 import { connectEbb, findEbbPort } from '../backends/node-serial.ts'
@@ -430,6 +431,7 @@ const main = defineCommand({
     job: jobCmd,
     series: seriesCmd,
     calibrate: calibrateCmd,
+    'calibrate-speed': calibrateSpeedCmd,
     pen: penCmd,
     move: moveCmd,
     home: homeCmd,
