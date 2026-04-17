@@ -13,13 +13,15 @@ import type { PlotBackend } from './interface.ts'
 import type { Job, ResolvedProfile } from '../core/job.ts'
 import type { PlotEmitter } from '../core/events.ts'
 import type { RunJobResult } from './types.ts'
+import type { JobMetrics } from '../core/job.ts'
 import {
   EbbCommands,
   SPEED_PENDOWN_MAX_MMS, SPEED_PENUP_MAX_MMS,
   LM_MIN_FIRMWARE, firmwareAtLeast,
 } from './ebb-protocol.ts'
 import type { EbbTransport } from './transport.ts'
-import { svgToMoves } from './svg-to-moves.ts'
+import { svgToMoves, type PlannerMove } from './svg-to-moves.ts'
+import { strokesToMoves, type Stroke } from '../core/stroke.ts'
 import { reorder, type OptimizeLevel } from '../core/reorder.ts'
 import { planMove, planStroke, optionsForProfile } from '../core/planner.ts'
 import { isInEnvelope, type Envelope } from '../core/envelope.ts'
@@ -224,10 +226,50 @@ export class EBBBackend implements PlotBackend {
     signal?: AbortSignal,
     options: RunJobOptions = {},
   ): Promise<RunJobResult> {
-    const profile = job.profile
-    const layer = options.layer
+    const rawMoves = svgToMoves(job.svg, { tolerance: 0.1, layer: options.layer })
+    const result = await this.runMoves(job.profile, rawMoves, emitter, signal, {
+      ...options,
+      optimize: (job.optimize ?? 0) as OptimizeLevel,
+      copies: job.copies ?? 1,
+    })
+    if (result.metrics) {
+      job.metrics.pendownM += result.metrics.pendownM
+      job.metrics.travelM  += result.metrics.travelM
+      job.metrics.penLifts += result.metrics.penLifts
+    }
+    return result
+  }
+
+  /**
+   * Run a plot from a list of stroke polylines — the code-first path. Converts
+   * to planner moves internally then delegates to runMoves.
+   */
+  async runStrokes(
+    profile: ResolvedProfile,
+    strokes: Stroke[],
+    emitter: PlotEmitter,
+    signal?: AbortSignal,
+    options: RunJobOptions & { optimize?: OptimizeLevel; copies?: number } = {},
+  ): Promise<RunJobResult> {
+    const moves = strokesToMoves(strokes, { layer: options.layer })
+    return this.runMoves(profile, moves, emitter, signal, options)
+  }
+
+  /**
+   * Run a plot from an already-flattened move sequence. This is the common
+   * inner engine used by runJob (after SVG parsing) and runStrokes (after
+   * stroke-to-move conversion). Callers pass raw moves; this method handles
+   * reorder, servo config, the main loop, and end-of-copy cleanup.
+   */
+  async runMoves(
+    profile: ResolvedProfile,
+    rawMoves: PlannerMove[],
+    emitter: PlotEmitter,
+    signal?: AbortSignal,
+    options: RunJobOptions & { optimize?: OptimizeLevel; copies?: number } = {},
+  ): Promise<RunJobResult> {
     const startFrom = clamp01(options.startFrom ?? 0)
-    const copies = Math.max(1, job.copies ?? 1)
+    const copies = Math.max(1, options.copies ?? 1)
     const pageDelayMs = Math.max(0, (options.pageDelayS ?? 0) * 1000)
     const envelope = options.envelope ?? null
 
@@ -236,12 +278,10 @@ export class EBBBackend implements PlotBackend {
     await this.ebb.penUp()
     this.penIsDown = false
 
-    // Parse SVG → moves, apply layer filter, then reorder per optimize level.
-    const rawMoves = svgToMoves(job.svg, { tolerance: 0.1, layer })
     if (rawMoves.length === 0) {
       return { stoppedAt: 1, aborted: false }
     }
-    const { moves } = reorder(rawMoves, (job.optimize ?? 0) as OptimizeLevel)
+    const { moves } = reorder(rawMoves, options.optimize ?? 0)
 
     const speedDown = percentToMms(profile.speedPendown, true)
     const speedUp   = percentToMms(profile.speedPenup, false)
@@ -367,12 +407,9 @@ export class EBBBackend implements PlotBackend {
       await this.home()
     }
 
-    job.metrics.pendownM += pendownM
-    job.metrics.travelM  += travelM
-    job.metrics.penLifts += penLifts
-
-    emitter.emit('complete', job.metrics)
-    return { stoppedAt: 1, aborted: false }
+    const metrics = { pendownM, travelM, penLifts }
+    emitter.emit('complete', { ...metrics, durationS: 0 } as JobMetrics)
+    return { stoppedAt: 1, aborted: false, metrics }
   }
 }
 

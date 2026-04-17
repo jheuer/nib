@@ -10,6 +10,8 @@ export interface RunJobResult {
   /** 0–1 fraction; 1 = fully complete */
   stoppedAt: number
   aborted: boolean
+  /** Motion metrics accumulated during the run (zero on abort before any motion). */
+  metrics?: { pendownM: number; travelM: number; penLifts: number }
 }
 
 export interface PreviewStats {

@@ -166,7 +166,18 @@ CLI storage (profiles.toml, state.toml, job history) stays Node-only, out of the
 7. Split `package.json` exports into `.` / `./core` / `./node` / `./browser` entry points.
 8. Add a browser smoke test (ideally hardware-in-the-loop with a real EBB plus Chrome/Edge).
 
-### Phase 6c — Stroke-level API for code-first sketches (primary use case)
+### Phase 6c — Stroke-level API (done 2026-04-16)
+
+Shipped the code-first pipeline. Consumers can now build generative scenes from pure-function geometry primitives and plot them without going through SVG.
+
+- `src/core/stroke.ts` — `Stroke` type, `strokesToMoves`, `movesToStrokes`, `strokeStats`.
+- `src/core/geom.ts` — pure primitives: `line`, `polyline`, `polygon`, `rect` (square + rounded), `circle`, `ellipse`, `arc`, `bezier`, `quadBezier`. Transform helpers: `translate`, `scale`, `rotate`.
+- `EBBBackend.runJob` split into `runJob` (SVG) → `runMoves` (flattened moves) + `runStrokes` (stroke list) → shared inner loop.
+- Top-level `plotStrokes(strokes, options)` — works in Node (auto-detects port) or browser (pass a transport). Supports `onProgress` / `onStroke` callbacks, envelope bounds, layer filter, copies.
+- Public surface exported from `src/index.ts`: `plotStrokes`, `Stroke`, `Point`, `strokesToMoves`, `movesToStrokes`, `strokeStats`, and `geom` namespace.
+- Tests: `test/stroke.test.ts` (11), `test/geom.test.ts` (18). 158 pass total.
+
+### Phase 6c — Stroke-level API, original plan:
 
 Decision: code-first generative sketches are the dominant web consumer, not canvas-UI drawing apps. The library should feel natural when a script produces polylines programmatically — no SVG round-trip required.
 
