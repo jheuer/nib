@@ -122,6 +122,12 @@ export interface ProjectConfig {
   simplifyMm?: number
   defaultProfile?: string
   paper?: string
+  /** Portrait/landscape override for `paper` when a named size is used. */
+  paperOrientation?: 'portrait' | 'landscape'
+  /** mm offset from machine home to the paper's top-left, "X,Y". */
+  paperOffset?: string
+  /** CSS colour for preview rendering of the paper sheet. */
+  paperColor?: string
   layers?: LayerConfig[]
   preprocess?: {
     steps?: PreprocessStep[]
@@ -149,6 +155,11 @@ export async function loadProjectConfig(cwd = process.cwd()): Promise<ProjectCon
   if (typeof data['simplify_mm'] === 'number') config.simplifyMm = data['simplify_mm']
   if (data['default_profile']) config.defaultProfile = data['default_profile'] as string
   if (data['paper']) config.paper = data['paper'] as string
+  if (data['paper_orientation'] === 'portrait' || data['paper_orientation'] === 'landscape') {
+    config.paperOrientation = data['paper_orientation']
+  }
+  if (data['paper_offset']) config.paperOffset = data['paper_offset'] as string
+  if (data['paper_color'])  config.paperColor  = data['paper_color']  as string
   if (Array.isArray(data['layers'])) {
     config.layers = (data['layers'] as Record<string, unknown>[]).map(l => ({
       id: l['id'] as number,

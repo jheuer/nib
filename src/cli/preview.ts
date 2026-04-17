@@ -17,6 +17,7 @@ import { previewStatsFromSvg } from '../backends/ebb-preview.ts'
 import { printError, formatDuration, formatDistance } from '../tui/output.ts'
 import { applyPreprocessSteps } from '../core/preprocess.ts'
 import { resolveAutoRotate } from '../core/auto-rotate.ts'
+import { resolvePaper, type ResolvedPaper } from '../core/paper.ts'
 import '../tui/env.ts'
 
 function expandPath(p: string): string {
@@ -72,6 +73,22 @@ export const previewCmd = defineCommand({
       type: 'boolean',
       description: 'Suppress the machine envelope + home marker overlay in --open preview (on by default when a machine is configured)',
       default: false,
+    },
+    paper: {
+      type: 'string',
+      description: 'Paper size to render inside the envelope. Accepts "A4", "A3", "letter", or explicit "WxH" mm. Overrides axidraw.toml.',
+    },
+    'paper-orientation': {
+      type: 'string',
+      description: 'Force paper orientation: "portrait" or "landscape". If omitted, uses the natural aspect of the named size.',
+    },
+    'paper-offset': {
+      type: 'string',
+      description: 'Paper offset from home corner as "X,Y" in mm (default: 0,0).',
+    },
+    'paper-color': {
+      type: 'string',
+      description: 'CSS colour for the paper sheet in the --open preview (default: cream #fdfcf7).',
     },
   },
   async run({ args }) {
@@ -249,6 +266,14 @@ export const previewCmd = defineCommand({
 
     // ── Open browser preview ──────────────────────────────────────────────────
     if (args.open) {
+      // Resolve paper: CLI flags override axidraw.toml.
+      const paper = resolvePaper({
+        size:        args.paper                                ?? projectConfig?.paper,
+        orientation: (args['paper-orientation'] as 'portrait' | 'landscape' | undefined)
+                       ?? projectConfig?.paperOrientation,
+        offset:      args['paper-offset']                      ?? projectConfig?.paperOffset,
+        color:       args['paper-color']                       ?? projectConfig?.paperColor,
+      })
       await openBrowserPreview(processedSvg, name, {
         nibSizeMm: profile.nibSizeMm,
         color: profile.color,
@@ -257,6 +282,7 @@ export const previewCmd = defineCommand({
         envelope: args['hide-envelope'] ? undefined : envEarly?.envelope,
         marginMm: args['hide-envelope'] ? undefined : envEarly?.marginMm,
         rotateDeg,
+        paper,
       })
     }
   },
@@ -270,6 +296,7 @@ interface PreviewOpts {
   envelope?: { widthMm: number; heightMm: number }
   marginMm?: number
   rotateDeg: number
+  paper: ResolvedPaper | null
 }
 
 /**
@@ -365,9 +392,28 @@ async function openBrowserPreview(
     </g>
   ` : ''
 
+  // When a paper is configured, the paper rect carries the white/cream fill
+  // and the envelope collapses to a dashed outline — so you can see the
+  // paper floating inside the machine's reach. Without paper, the envelope
+  // keeps the solid white fill (same behaviour as before).
+  const paperRect = opts.paper ? `
+    <!-- paper drop shadow -->
+    <rect x="${opts.paper.offsetXMm + 0.6}" y="${opts.paper.offsetYMm + 0.6}"
+          width="${opts.paper.widthMm}" height="${opts.paper.heightMm}"
+          fill="rgba(0,0,0,0.08)" stroke="none"/>
+    <rect x="${opts.paper.offsetXMm}" y="${opts.paper.offsetYMm}"
+          width="${opts.paper.widthMm}" height="${opts.paper.heightMm}"
+          fill="${opts.paper.color}" stroke="#aaa" stroke-width="0.25"/>
+  ` : ''
+
+  const envelopeFill   = opts.paper ? 'none'  : 'white'
+  const envelopeStroke = opts.paper ? '#bbb'  : '#999'
+  const envelopeDash   = opts.paper ? '2,1.4' : 'none'
+
   const envelopeOverlay = showEnvelope ? `
-    <rect x="0" y="0" width="${envW}" height="${envH}" fill="white" stroke="#999" stroke-width="0.3"/>
-    ${margin > 0 ? `<rect x="${margin}" y="${margin}" width="${envW - 2 * margin}" height="${envH - 2 * margin}" fill="none" stroke="#c8c8c8" stroke-dasharray="1.5,1" stroke-width="0.2"/>` : ''}
+    <rect x="0" y="0" width="${envW}" height="${envH}" fill="${envelopeFill}" stroke="${envelopeStroke}" stroke-width="0.3" stroke-dasharray="${envelopeDash}"/>
+    ${paperRect}
+    ${margin > 0 ? `<rect x="${margin}" y="${margin}" width="${envW - 2 * margin}" height="${envH - 2 * margin}" fill="none" stroke="#d5d5d5" stroke-dasharray="1.5,1" stroke-width="0.2"/>` : ''}
     ${gantryOverlay}
     <!-- Small red crosshair at (0,0) — the "Home" label on the rail block
          is the textual callout; the crosshair just marks the precise origin. -->
@@ -406,7 +452,10 @@ async function openBrowserPreview(
   </svg>`
 
   const legend = showEnvelope
-    ? `envelope ${envW}×${envH}mm${margin > 0 ? ` · ${margin}mm margin` : ''}`
+    ? [
+        `envelope ${envW}×${envH}mm${margin > 0 ? ` · ${margin}mm margin` : ''}`,
+        opts.paper ? `paper ${opts.paper.widthMm}×${opts.paper.heightMm}mm${opts.paper.offsetXMm || opts.paper.offsetYMm ? ` @ (${opts.paper.offsetXMm},${opts.paper.offsetYMm})` : ''}` : null,
+      ].filter(Boolean).join(' · ')
     : `content ${Math.round(rotatedW)}×${Math.round(rotatedH)}mm`
 
   const previewHtml = `<!DOCTYPE html>
