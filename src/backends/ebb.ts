@@ -21,7 +21,7 @@ import {
 } from './ebb-protocol.ts'
 import type { EbbTransport } from './transport.ts'
 import { svgToMoves, type PlannerMove } from './svg-to-moves.ts'
-import { strokesToMoves, type Stroke } from '../core/stroke.ts'
+import { strokesToMoves, simplifyMoves, type Stroke } from '../core/stroke.ts'
 import { reorder, type OptimizeLevel } from '../core/reorder.ts'
 import { planMove, planStroke, optionsForProfile } from '../core/planner.ts'
 import { isInEnvelope, type Envelope } from '../core/envelope.ts'
@@ -300,7 +300,13 @@ export class EBBBackend implements PlotBackend {
     if (rawMoves.length === 0) {
       return { stoppedAt: 1, aborted: false }
     }
-    const { moves } = reorder(rawMoves, options.optimize ?? 0)
+    // Simplify first (fewer points per stroke) → reorder (fewer strokes to
+    // compare) → plan. Simplify before reorder because reorder treats each
+    // stroke as an atomic unit; reducing internal points doesn't change its
+    // endpoints. Order is preserved.
+    const simplifyMm = options.simplifyMm ?? 0
+    const simplified = simplifyMm > 0 ? simplifyMoves(rawMoves, simplifyMm) : rawMoves
+    const { moves } = reorder(simplified, options.optimize ?? 0)
 
     const speedDown = percentToMms(profile.speedPendown, true)
     const speedUp   = percentToMms(profile.speedPenup, false)
@@ -449,6 +455,11 @@ export interface RunJobOptions {
   envelope?: Envelope
   /** Safety inset from the envelope (mm, all sides). Default 0. */
   marginMm?: number
+  /**
+   * Polyline simplification tolerance in mm. Applied before reorder and
+   * planning. 0 disables. 0.1–0.3 typical for over-sampled SVGs.
+   */
+  simplifyMm?: number
 }
 
 export interface EbbPlotOptions extends RunJobOptions {
@@ -500,6 +511,7 @@ export async function runJobEbb(
       pageDelayS: options.pageDelayS,
       envelope: options.envelope,
       marginMm: options.marginMm,
+      simplifyMm: options.simplifyMm,
     })
   } finally {
     if (ownsTransport) {

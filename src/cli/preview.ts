@@ -59,6 +59,10 @@ export const previewCmd = defineCommand({
       description: 'Path reordering: 0=adjacent 1=nearest 2=with-reversal',
       default: '0',
     },
+    simplify: {
+      type: 'string',
+      description: 'Douglas-Peucker polyline simplification tolerance in mm (e.g. 0.2).',
+    },
   },
   async run({ args }) {
     const profileName = args.profile ?? process.env.NIB_PROFILE
@@ -135,7 +139,10 @@ export const previewCmd = defineCommand({
     process.stderr.write(`  ${chalk.dim('Profile:')}  ${profile.name} ${chalk.dim(`(${profile.speedPendown}% down · ${profile.speedPenup}% up)`)}\n\n`)
 
     // ── Compute stats from the planner (no hardware, no subprocess) ─────────
-    const stats = previewStatsFromSvg(processedSvg, profile, job.optimize)
+    const simplifyMm = args.simplify !== undefined
+      ? parseFloat(args.simplify)
+      : projectConfig?.simplifyMm
+    const stats = previewStatsFromSvg(processedSvg, profile, job.optimize, simplifyMm)
 
     if (args.json) {
       process.stdout.write(JSON.stringify({ ...stats, svgStats }, null, 2) + '\n')

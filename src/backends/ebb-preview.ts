@@ -16,22 +16,26 @@ import type { ResolvedProfile } from '../core/job.ts'
 import type { PreviewStats } from './types.ts'
 import { planMove, planStroke, optionsForProfile } from '../core/planner.ts'
 import { reorder, type OptimizeLevel } from '../core/reorder.ts'
+import { simplifyMoves } from '../core/stroke.ts'
 
 // ─── Public API ───────────────────────────────────────────────────────────────
 
 /**
  * Compute preview statistics from an SVG string + profile, without hardware.
  *
- * Applies the same reorder level the plot will use, so lift count / travel /
- * ETA reflect what actually happens on paper — not the raw document order.
+ * Applies the same simplification, reorder, and planning the plot will use,
+ * so the reported lift count / travel / ETA match what actually happens on
+ * paper — not the raw document order.
  */
 export function previewStatsFromSvg(
   svg: string,
   profile: ResolvedProfile,
   optimize: OptimizeLevel = 0,
+  simplifyMm = 0,
 ): PreviewStats {
   const raw = svgToMoves(svg, { tolerance: 0.05 })
-  const { moves } = reorder(raw, optimize)
+  const simplified = simplifyMm > 0 ? simplifyMoves(raw, simplifyMm) : raw
+  const { moves } = reorder(simplified, optimize)
   return previewStatsFromMoves(moves, profile)
 }
 

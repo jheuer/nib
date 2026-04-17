@@ -2,6 +2,7 @@ import { describe, it, expect } from 'bun:test'
 import {
   line, polyline, polygon, rect, circle, ellipse, arc, bezier, quadBezier,
   translate, scale, rotate,
+  simplifyPolyline, simplifyStrokes,
 } from '../src/core/geom.ts'
 import type { Point } from '../src/core/stroke.ts'
 
@@ -157,6 +158,113 @@ describe('transforms', () => {
   it('transforms preserve skip and layer flags', () => {
     const out = translate([{ points: L, layer: 1, skip: true }], 10, 10)
     expect(out[0].layer).toBe(1)
+    expect(out[0].skip).toBe(true)
+  })
+})
+
+describe('simplifyPolyline', () => {
+  it('colinear points collapse to endpoints', () => {
+    const pts = [
+      { x: 0, y: 0 },
+      { x: 1, y: 0 },
+      { x: 2, y: 0 },
+      { x: 3, y: 0 },
+      { x: 4, y: 0 },
+    ]
+    expect(simplifyPolyline(pts, 0.1)).toEqual([
+      { x: 0, y: 0 }, { x: 4, y: 0 },
+    ])
+  })
+
+  it('preserves corners above tolerance', () => {
+    // L-shape: (0,0) → (10,0) → (10,10). Middle corner is 10mm off the direct
+    // chord — preserved at any reasonable tolerance.
+    const out = simplifyPolyline(
+      [{ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 10, y: 10 }], 0.1,
+    )
+    expect(out.length).toBe(3)
+  })
+
+  it('drops points with small perpendicular deviation', () => {
+    // Line with tiny wiggle — single off-line point 0.01mm from the chord.
+    const out = simplifyPolyline(
+      [{ x: 0, y: 0 }, { x: 5, y: 0.01 }, { x: 10, y: 0 }], 0.1,
+    )
+    expect(out.length).toBe(2)
+  })
+
+  it('keeps points with large perpendicular deviation', () => {
+    // Same shape but the middle point is 2mm off — must be preserved.
+    const out = simplifyPolyline(
+      [{ x: 0, y: 0 }, { x: 5, y: 2 }, { x: 10, y: 0 }], 0.1,
+    )
+    expect(out.length).toBe(3)
+  })
+
+  it('always preserves first and last points', () => {
+    const pts = Array.from({ length: 50 }, (_, i) => ({ x: i, y: 0 }))
+    const out = simplifyPolyline(pts, 0.5)
+    expect(out[0]).toEqual({ x: 0, y: 0 })
+    expect(out[out.length - 1]).toEqual({ x: 49, y: 0 })
+  })
+
+  it('degenerate inputs pass through unchanged', () => {
+    expect(simplifyPolyline([], 0.1)).toEqual([])
+    expect(simplifyPolyline([{ x: 0, y: 0 }], 0.1)).toEqual([{ x: 0, y: 0 }])
+    expect(simplifyPolyline(
+      [{ x: 0, y: 0 }, { x: 10, y: 0 }], 0.1,
+    )).toEqual([{ x: 0, y: 0 }, { x: 10, y: 0 }])
+  })
+
+  it('zero tolerance is a no-op', () => {
+    const pts = [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 2, y: 0 }]
+    expect(simplifyPolyline(pts, 0)).toEqual(pts)
+  })
+
+  it('handles very long polylines without stack overflow', () => {
+    // 100_000 points on a noisy line — recursive DP would overflow Bun's
+    // stack; the iterative version copes fine.
+    const pts = Array.from({ length: 100_000 }, (_, i) => ({
+      x: i * 0.01,
+      y: Math.sin(i * 0.001) * 0.01,     // noise well below 0.1mm tolerance
+    }))
+    const out = simplifyPolyline(pts, 0.1)
+    expect(out.length).toBeLessThan(100)
+  })
+
+  it('matches a known case: flattened circle compresses aggressively', () => {
+    // Circle sampled at 0.01 mm arc-length steps — huge point count that
+    // should compact dramatically at 0.1mm tolerance.
+    const r = 10
+    const steps = 6000
+    const pts = Array.from({ length: steps }, (_, i) => {
+      const t = (i / steps) * 2 * Math.PI
+      return { x: Math.cos(t) * r, y: Math.sin(t) * r }
+    })
+    const out = simplifyPolyline(pts, 0.1)
+    // A circle of r=10 at 0.1mm tolerance should hit ~28-45 points — check
+    // that we're in a sensible range, not point-for-point pass-through.
+    expect(out.length).toBeGreaterThan(10)
+    expect(out.length).toBeLessThan(200)
+  })
+})
+
+describe('simplifyStrokes', () => {
+  it('applies to every stroke', () => {
+    const strokes = [
+      { points: [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 2, y: 0 }] },
+      { points: [{ x: 0, y: 0 }, { x: 1, y: 10 }, { x: 2, y: 0 }] },
+    ]
+    const out = simplifyStrokes(strokes, 0.1)
+    expect(out[0].points.length).toBe(2)   // collapsed
+    expect(out[1].points.length).toBe(3)   // corner preserved
+  })
+
+  it('preserves layer and skip flags', () => {
+    const out = simplifyStrokes([
+      { points: [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 2, y: 0 }], layer: 2, skip: true },
+    ], 0.1)
+    expect(out[0].layer).toBe(2)
     expect(out[0].skip).toBe(true)
   })
 })

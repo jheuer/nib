@@ -57,6 +57,12 @@ export interface ProjectConfig {
    * Default: 5mm.
    */
   marginMm?: number
+  /**
+   * Polyline simplification tolerance in mm, applied before planning. 0 or
+   * undefined = no simplification. 0.1–0.3 typical for over-sampled SVGs;
+   * the pen won't visibly notice, but LM command count drops 5–20×.
+   */
+  simplifyMm?: number
   defaultProfile?: string
   paper?: string
   layers?: LayerConfig[]
@@ -83,6 +89,7 @@ export async function loadProjectConfig(cwd = process.cwd()): Promise<ProjectCon
   if (data['model']) config.model = data['model'] as string
   if (data['envelope']) config.envelope = data['envelope'] as string
   if (typeof data['margin_mm'] === 'number') config.marginMm = data['margin_mm']
+  if (typeof data['simplify_mm'] === 'number') config.simplifyMm = data['simplify_mm']
   if (data['default_profile']) config.defaultProfile = data['default_profile'] as string
   if (data['paper']) config.paper = data['paper'] as string
   if (Array.isArray(data['layers'])) {

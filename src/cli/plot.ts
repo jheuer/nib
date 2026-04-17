@@ -61,6 +61,10 @@ export const plotCmd = defineCommand({
       description: 'Path reordering: 0=adjacent 1=nearest 2=with-reversal',
       default: '0',
     },
+    simplify: {
+      type: 'string',
+      description: 'Douglas-Peucker polyline simplification tolerance in mm (e.g. 0.2). 0 = off. Overrides axidraw.toml.',
+    },
     guided: {
       type: 'boolean',
       description: 'Interactive multi-pen guided mode (walks layers with pen-swap prompts)',
@@ -358,9 +362,18 @@ export const plotCmd = defineCommand({
     try {
       const layerNum = args.layer !== undefined ? parseInt(args.layer, 10) : undefined
       const eff = await getEffectiveEnvelope()
+      const simplifyMm = args.simplify !== undefined
+        ? parseFloat(args.simplify)
+        : projectConfig?.simplifyMm
       const result = await runJobEbb(
         job, emitter,
-        { port, layer: layerNum, envelope: eff?.envelope, marginMm: eff?.marginMm },
+        {
+          port,
+          layer: layerNum,
+          envelope: eff?.envelope,
+          marginMm: eff?.marginMm,
+          simplifyMm,
+        },
         controller.signal,
       )
 
@@ -388,7 +401,7 @@ export const plotCmd = defineCommand({
       job.status = 'complete'
       job.completedAt = new Date()
       job.metrics.durationS = durationS
-      emitter.emit('complete', job.metrics)
+      // `complete` already emitted by runMoves inside runJobEbb — don't re-emit.
       printPlotComplete(durationS, job.metrics, id)
       // Backend homes at end of every copy — arm is at origin.
       await resetArmState()

@@ -96,6 +96,27 @@ export function movesToStrokes(moves: PlannerMove[]): Stroke[] {
 // ─── Stats (pure, browser-safe) ──────────────────────────────────────────────
 
 /**
+ * Simplify a flat PlannerMove sequence via stroke-level Douglas–Peucker.
+ * Groups consecutive pen-down moves into strokes, simplifies each stroke's
+ * interior at the given tolerance, and re-emits the flat move list.
+ *
+ * Useful when the source SVG is an over-sampled polyline (sub-0.1mm segments)
+ * that explodes into hundreds of LM commands per stroke. A 0.2mm tolerance
+ * typically compacts 10–20× with no visible paper difference.
+ */
+import { simplifyPolyline } from './geom.ts'
+
+export function simplifyMoves(moves: PlannerMove[], toleranceMm: number): PlannerMove[] {
+  if (toleranceMm <= 0 || moves.length < 3) return moves
+  const strokes = movesToStrokes(moves)
+  const simplified: Stroke[] = strokes.map(s => ({
+    ...s,
+    points: simplifyPolyline(s.points, toleranceMm),
+  }))
+  return strokesToMoves(simplified)
+}
+
+/**
  * Cheap structural stats — stroke count, total pen-down distance, bounding box.
  * Useful for UI previews without running the planner.
  */
