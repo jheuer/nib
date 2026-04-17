@@ -90,8 +90,45 @@ nib plot drawing.svg --profile fineliner --optimize 2
 | `nib watch <file>` | Re-plot on SVG save. |
 | `nib series <script>` | Run a generator script N times, plot each, prompt for paper change. |
 | `nib fw` | Query EBB firmware version. |
+| `nib machine register\|list\|current\|models` | Tag an EBB board (EEPROM `ST`/`QT`) and pick an envelope automatically when it's connected. |
 
 Run `nib <command> --help` for full flag lists. `-v` / `--verbose` shows raw EBB commands on stderr.
+
+### Visual preview
+
+`nib preview <svg> --open` opens an HTML preview in the browser rendered at
+real machine scale, with:
+
+- Machine envelope outline
+- Paper sheet (if configured) at its offset, with a subtle drop shadow
+- To-scale AxiDraw schematic: black gantry rail, silver traverse arm, home block
+- Strokes rendered at the profile's real nib width and ink colour
+- Applied auto-rotate so what you see matches what will plot
+
+Flags:
+```bash
+--rotate auto|none|90       # auto (default) fits portrait SVG → landscape envelope
+--paper A4|A3|letter|WxH    # paper size for the overlay
+--paper-orientation portrait|landscape
+--paper-offset X,Y          # mm from home to paper top-left
+--paper-color '#fdfcf7'     # paper sheet colour (try black for metallic pen previews)
+--hide-envelope             # just the content, no machine chrome
+```
+
+### Multi-machine setup
+
+If you drive multiple AxiDraws from one computer, tag each board:
+
+```bash
+nib machine register A3 --model V3A3 --description "studio A3"
+# writes "A3" to the board's EEPROM (ST), saves a [machines.A3] config entry
+
+nib machine register mini --model Mini --description "travel kit"
+```
+
+Plot just works after that — `nib plot` reads the connected board's EEPROM
+tag (QT) at startup, picks the matching envelope, and prints `Machine: A3`
+in the header. `nib machine current` shows the detected board.
 
 ---
 
@@ -210,6 +247,42 @@ connectButton.addEventListener('click', async () => {
 
 The transport is long-lived — one `requestEbbPort()` can host many plots. Call `transport.close()` when you're done.
 
+### Live / streaming sessions
+
+For interactive workflows — draw on a canvas, generative sketches that emit
+strokes over time — use `LivePlotter`. It keeps the transport open and motors
+enabled between stroke submissions, so each `drawStroke()` call plots
+immediately without per-stroke setup/teardown.
+
+```typescript
+import { LivePlotter, requestEbbPort } from 'nib/browser'
+
+const transport = await requestEbbPort()
+const live = new LivePlotter(transport, {
+  profile: { speedPendown: 25, speedPenup: 50, penPosDown: 35, penPosUp: 55, accel: 40 },
+})
+await live.start()
+
+canvas.addEventListener('pointerup', async () => {
+  await live.drawStroke(currentPoints)   // plots now; queues if arm is busy
+})
+
+// later
+await live.close()   // homes, disables motors, releases the port
+```
+
+### Examples
+
+```bash
+bun run example:canvas   # draw on an HTML canvas, strokes stream to the plotter
+bun run example:p5       # p5.js flow-field — any p5 sketch can plot via nibCapture()
+```
+
+The p5 bridge (`examples/browser/p5/p5-nib.ts`) is a ~60-line monkey-patch of
+`p5.line` / `p5.beginShape` / `p5.vertex` / `p5.endShape` / `p5.rect` that
+silently captures strokes in mm. Drop it on any p5 instance and call
+`capture.strokes()` to get the plottable list.
+
 ### Bring-your-own SerialPort
 
 If you already have a `SerialPort` (e.g. auto-reconnecting via `navigator.serial.getPorts()`):
@@ -240,7 +313,14 @@ nib reads and writes two kinds of config on Node:
 ```toml
 model = "V3A3"                      # machine envelope lookup
 # envelope = "280x218"              # or explicit WxH
-paper = "297x420mm"
+margin_mm = 5                       # safety inset on all sides
+simplify_mm = 0.2                   # Douglas–Peucker tolerance (0 = off)
+
+paper = "A4"                        # named or "210x297"
+paper_orientation = "landscape"     # optional; flips natural size
+paper_offset = "10,10"              # mm from home; shifts content into paper space
+paper_color = "#fdfcf7"             # preview rendering
+
 default_profile = "fineliner"
 
 [[layers]]                          # multi-pen workflows
@@ -260,6 +340,11 @@ steps = ["strip-fills", "center"]   # applied before plotting
 [hooks]
 on_complete = "terminal-notifier -message 'Done: {{file}}'"
 ```
+
+Paper offset auto-translates content so SVG (0,0) lands at the paper's top-left
+instead of the machine's home corner — i.e. "plot this SVG onto that sheet,"
+which is almost always what you want. Add `--machine-origin` on the CLI to opt
+out and work in raw machine coords.
 
 See [`axidraw-cli-design.md`](./axidraw-cli-design.md) for the full schema.
 
@@ -294,6 +379,21 @@ With `model = "V3A3"` (or `envelope = "280x218"`) in `axidraw.toml`, nib refuses
 - Pen percentages outside 20–60% can push the servo past the pen mechanism's mechanical travel. The `nib calibrate` defaults stay inside that range.
 - The EBB firmware command `EM` has an **inverted** argument mapping: `EM,1,1` = 1/16 microstep, `EM,5,5` = full step. nib handles this; mentioned here because it's easy to miss when debugging.
 - On some firmware (seen on 2.8.1), `SP,0` / `SP,1` can be silently no-op'd on repeated state transitions. nib always fires an `S2` direct-PWM command after `SP` to guarantee the servo moves.
+- Board nickname commands are `ST`/`QT` (set/query tag). The similarly-named `SN`/`QN` commands are "Set/Query Node Count" — a different feature. `nib machine` uses ST/QT.
+
+### Firmware compatibility
+
+nib inspects the connected board's firmware version (`V` command) on connect
+and exposes per-feature capability flags. Tested against **2.8.1** but also
+handles older boards gracefully:
+
+| Feature | Min firmware | Fallback if older |
+|---|---|---|
+| `LM` (trapezoidal moves) | 2.7.0 | SM constant-speed, no junction velocities |
+| `QM` (motor-idle poll) | 2.4.4 | fixed sleep for planned duration |
+| `ES` (emergency stop) | 2.2.7 | wait for FIFO drain on ^C |
+| `HM` (firmware home) | 2.6.2 | resume-after-pause is disabled |
+| `ST`/`QT` (nickname) | 2.0.0 | `nib machine` unavailable |
 
 ---
 
