@@ -6,6 +6,7 @@ import { plotCmd } from './plot.ts'
 import { previewCmd } from './preview.ts'
 import { watchCmd } from './watch.ts'
 import { profileCmd } from './profile.ts'
+import { machineCmd } from './machine.ts'
 import { jobCmd } from './job.ts'
 import { seriesCmd } from './series.ts'
 import { calibrateCmd } from './calibrate.ts'
@@ -428,6 +429,7 @@ const main = defineCommand({
     preview: previewCmd,
     watch: watchCmd,
     profile: profileCmd,
+    machine: machineCmd,
     job: jobCmd,
     series: seriesCmd,
     calibrate: calibrateCmd,

@@ -197,6 +197,7 @@ export class EBBBackend implements PlotBackend {
     moveIdx: number, totalMoves: number,
     copy: number, copies: number,
     reason: string,
+    { returnHome = true }: { returnHome?: boolean } = {},
   ): Promise<void> {
     await this.ebb.emergencyStop().catch(() => undefined)
     await sleep(100)  // let the firmware process ES and settle
@@ -204,10 +205,31 @@ export class EBBBackend implements PlotBackend {
       await this.ebb.penUp().catch(() => undefined)
       this.penIsDown = false
     }
-    await this.home().catch(() => undefined)
+    // On user-initiated pause we skip home so the resume/abort prompt appears
+    // immediately. The arm stays wherever it stopped; caller must home it
+    // (e.g. via HM) before resuming, since software position is now stale.
+    if (returnHome) {
+      await this.home().catch(() => undefined)
+    }
     const fraction = (copy + moveIdx / totalMoves) / copies
     process.stderr.write(`\n  ${reason}\n`)
     emitter.emit('abort', fraction)
+  }
+
+  /**
+   * Firmware-native home via HM. Use after a pause/ES when software position
+   * is stale — HM uses the firmware's internal step counter (the origin set
+   * when motors were enabled), so it returns to the physical origin regardless
+   * of whether currentX/Y agrees.
+   */
+  async homeMachine(): Promise<void> {
+    if (this.penIsDown) {
+      await this.ebb.penUp().catch(() => undefined)
+      this.penIsDown = false
+    }
+    await this.ebb.homeMove()
+    this.currentX = 0
+    this.currentY = 0
   }
 
   /** Poll QM until motors are idle (FIFO drained). Gives up after 30s. */
@@ -332,7 +354,7 @@ export class EBBBackend implements PlotBackend {
       let i = copy === 0 ? firstIdx : 0
       while (i < moves.length) {
         if (signal?.aborted) {
-          await this.safeAbort(emitter, i, moves.length, copy, copies, 'aborted')
+          await this.safeAbort(emitter, i, moves.length, copy, copies, 'paused', { returnHome: false })
           return { stoppedAt: (copy + i / moves.length) / copies, aborted: true }
         }
 
@@ -402,7 +424,7 @@ export class EBBBackend implements PlotBackend {
         if (this.useLm) {
           const completed = await this.runStroke(strokePoints, profile, signal)
           if (!completed) {
-            await this.safeAbort(emitter, strokeStartIdx, moves.length, copy, copies, 'aborted')
+            await this.safeAbort(emitter, strokeStartIdx, moves.length, copy, copies, 'paused', { returnHome: false })
             return { stoppedAt: (copy + strokeStartIdx / moves.length) / copies, aborted: true }
           }
         } else {
@@ -484,6 +506,11 @@ export interface EbbPlotOptions extends RunJobOptions {
    * construct a NodeSerialTransport from `port` or auto-detect.
    */
   transport?: EbbTransport
+  /**
+   * Before running the job, issue a firmware-native home (HM) move. Use this
+   * to resume after a pause where software position is stale.
+   */
+  homeBeforeRun?: boolean
 }
 
 /**
@@ -518,6 +545,9 @@ export async function runJobEbb(
 
   const backend = new EBBBackend(transport)
   await backend.connect()
+  if (options.homeBeforeRun) {
+    await backend.homeMachine()
+  }
   try {
     return await backend.runJob(job, emitter, signal, {
       layer: options.layer,

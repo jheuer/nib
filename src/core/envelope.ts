@@ -24,7 +24,7 @@ export const MACHINE_ENVELOPES: Record<string, Envelope> = {
   'V3':    { widthMm: 280, heightMm: 218 },
   'V3A3':  { widthMm: 430, heightMm: 297 },
   'SE/A3': { widthMm: 430, heightMm: 297 },
-  'V3XLX': { widthMm: 595, heightMm: 218 },
+  'V3XL':  { widthMm: 595, heightMm: 218 },
   'Mini':  { widthMm: 152, heightMm: 101 },
   'MiniKit': { widthMm: 152, heightMm: 101 },
 }

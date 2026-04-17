@@ -28,6 +28,18 @@ export interface Profile {
   junctionDeviationMm?: number
   /** Servo idle timeout in ms before power-off. Default: 60000 (quiet=5000). */
   servoIdleMs?: number
+
+  /**
+   * Physical nib diameter in mm (e.g. 0.3 for a Staedtler 0.3, 0.5 for a
+   * Pilot V5). Used to render the preview at realistic stroke width and to
+   * stamp the plot card.
+   */
+  nibSizeMm?: number
+  /**
+   * Ink colour as a CSS colour string (e.g. "#1a1a1a", "royalblue"). Used by
+   * preview rendering and the plot card. Defaults to black.
+   */
+  color?: string
 }
 
 export interface ResolvedProfile extends Profile {

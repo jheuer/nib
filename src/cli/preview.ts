@@ -16,6 +16,7 @@ import { getSvgStats } from '../backends/svg-stats.ts'
 import { previewStatsFromSvg } from '../backends/ebb-preview.ts'
 import { printError, formatDuration, formatDistance } from '../tui/output.ts'
 import { applyPreprocessSteps } from '../core/preprocess.ts'
+import { resolveAutoRotate } from '../core/auto-rotate.ts'
 import '../tui/env.ts'
 
 function expandPath(p: string): string {
@@ -65,7 +66,7 @@ export const previewCmd = defineCommand({
     },
     rotate: {
       type: 'string',
-      description: 'Rotate content by N degrees (90 / 180 / 270) before computing stats.',
+      description: 'Rotate content before computing stats. "auto" (default) matches portrait SVGs to landscape machines. "none" disables; any number of degrees is also accepted.',
     },
   },
   async run({ args }) {
@@ -146,7 +147,25 @@ export const previewCmd = defineCommand({
     const simplifyMm = args.simplify !== undefined
       ? parseFloat(args.simplify)
       : projectConfig?.simplifyMm
-    const rotateDeg = args.rotate !== undefined ? parseFloat(args.rotate) : 0
+    // Resolve rotation (incl. axicli-style auto) using the machine envelope
+    // and SVG's declared width/height.
+    const envEarly = await getEffectiveEnvelope()
+    let rotateDeg = 0
+    try {
+      const rot = resolveAutoRotate(args.rotate, {
+        svgWidthMm:      svgStats.widthMm,
+        svgHeightMm:     svgStats.heightMm,
+        envelopeWidthMm:  envEarly?.envelope.widthMm  ?? null,
+        envelopeHeightMm: envEarly?.envelope.heightMm ?? null,
+      })
+      rotateDeg = rot.degrees
+      if (rot.auto && rot.degrees !== 0) {
+        process.stderr.write(`  ${chalk.dim(`Auto-rotate:`)} ${rot.degrees}° (${rot.reason})\n\n`)
+      }
+    } catch (err) {
+      printError((err as Error).message)
+      process.exit(2)
+    }
     const stats = previewStatsFromSvg(processedSvg, profile, job.optimize, simplifyMm, rotateDeg)
 
     if (args.json) {
@@ -189,7 +208,7 @@ export const previewCmd = defineCommand({
 
     // Machine envelope — the physical arm travel limit, minus the configured
     // safety margin (`margin_mm` in axidraw.toml, default 5mm).
-    const eff = await getEffectiveEnvelope()
+    const eff = envEarly
     if (eff) {
       const rawEnv = svgToMoves(processedSvg, { tolerance: 0.1 })
       const moves = rotateDeg ? (await import('../core/stroke.ts')).rotateMoves(rawEnv, rotateDeg) : rawEnv
@@ -225,14 +244,30 @@ export const previewCmd = defineCommand({
 
     // ── Open browser preview ──────────────────────────────────────────────────
     if (args.open) {
-      await openBrowserPreview(processedSvg, name)
+      await openBrowserPreview(processedSvg, name, {
+        nibSizeMm: profile.nibSizeMm,
+        color: profile.color,
+      })
     }
   },
 })
 
-/** Generates a simple two-layer SVG (travel gray + pen-down black) and opens it */
-async function openBrowserPreview(svg: string, name: string): Promise<void> {
-  // Wrap original SVG paths in a container for browser display
+/**
+ * Generates an HTML wrapper around the SVG that renders strokes at realistic
+ * nib width (if set on the profile) and in the profile's ink colour.
+ */
+async function openBrowserPreview(
+  svg: string, name: string,
+  pen: { nibSizeMm?: number; color?: string } = {},
+): Promise<void> {
+  // Build inline styles that apply to paths/polylines/lines inside the SVG.
+  // A declared `nib_size_mm` overrides any author-specified stroke-width so the
+  // preview matches what will actually land on paper.
+  const ink = pen.color ?? '#111'
+  const pathStyle = pen.nibSizeMm
+    ? `stroke:${ink}; stroke-width:${pen.nibSizeMm}mm; stroke-linecap:round; stroke-linejoin:round; fill:none`
+    : `stroke:${ink}; stroke-linecap:round; stroke-linejoin:round; fill:none`
+
   const previewHtml = `<!DOCTYPE html>
 <html>
 <head>
@@ -240,11 +275,12 @@ async function openBrowserPreview(svg: string, name: string): Promise<void> {
   <style>
     body { background: #f5f0e8; display: flex; align-items: center; justify-content: center; min-height: 100vh; margin: 0; }
     svg { max-width: 90vw; max-height: 90vh; border: 1px solid #ccc; background: white; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
+    svg path, svg polyline, svg line, svg polygon, svg circle, svg ellipse, svg rect { ${pathStyle}; }
   </style>
 </head>
 <body>
   ${svg.replace(/<svg/, '<svg style="max-width:90vw;max-height:90vh"')}
-  <p style="position:fixed;bottom:1rem;right:1rem;font-family:monospace;font-size:12px;color:#888">nib preview — ${name}</p>
+  <p style="position:fixed;bottom:1rem;right:1rem;font-family:monospace;font-size:12px;color:#888">nib preview — ${name}${pen.nibSizeMm ? ` · ${pen.nibSizeMm}mm` : ''}</p>
 </body>
 </html>`
 

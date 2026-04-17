@@ -100,7 +100,7 @@ Goal: `nib` offers a high-quality CLI experience for plotting SVGs over USB seri
 
 - **Persistent arm position**: `~/.local/share/nib/state.toml` tracks carriage X/Y across invocations. `nib move` advances it, `nib motors on` resets to (0,0), `nib motors off` / `nib release` mark it unknown. `nib plot` refuses to run when position is non-zero or unknown without `--yes`, with hints to `nib home` / `nib motors on`.
 - **`nib home` / `nib position`** — explicit commands for returning to origin and inspecting tracked state.
-- **Envelope bounds check**: `axidraw.toml` accepts `model = "V3A3"` (built-in table for V3 / V3A3 / Mini / SE/A3 / V3XLX) or `envelope = "280x218"` override. `nib preview` shows a machine-fit row, `nib plot` pre-flights every move against the envelope and refuses to start if any point is outside bounds. EBBBackend also runtime-guards every move during the plot and aborts cleanly on violation.
+- **Envelope bounds check**: `axidraw.toml` accepts `model = "V3A3"` (built-in table for V3 / V3A3 / Mini / SE/A3 / V3XL) or `envelope = "280x218"` override. `nib preview` shows a machine-fit row, `nib plot` pre-flights every move against the envelope and refuses to start if any point is outside bounds. EBBBackend also runtime-guards every move during the plot and aborts cleanly on violation.
 
 ### Phase 2c — Preview parity + transition tuning (done 2026-04-16)
 

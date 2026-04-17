@@ -141,6 +141,34 @@ export class EbbCommands {
   }
 
   /**
+   * Read the board name stored in EEPROM (QN command, firmware ≥ 2.5.5).
+   * Response is typically `<name>\r\nOK\r\n`. Returns empty string if no name
+   * is set. Nib uses this to auto-select machine config on connect when the
+   * user has multiple AxiDraws.
+   */
+  async queryName(): Promise<string> {
+    const resp = await this.command('QN')
+    // Response format: "<name>\r\nOK" — the first line before OK is the name.
+    // Some firmwares return just "OK" when no name is set.
+    const firstLine = resp.split(/[\r\n]/)[0] ?? ''
+    if (firstLine === 'OK') return ''
+    return firstLine.trim()
+  }
+
+  /**
+   * Write the board name to EEPROM (SN command, firmware ≥ 2.5.5). Name is
+   * stored persistently, survives power cycles. Max length is firmware-defined
+   * (16 chars on 2.8.x).
+   */
+  async setName(name: string): Promise<void> {
+    if (name.length > 16) {
+      throw new Error(`EBB name must be ≤16 characters (got ${name.length})`)
+    }
+    const resp = await this.command(`SN,${name}`)
+    if (!resp.startsWith('OK')) throw new Error(`SN rejected: ${resp}`)
+  }
+
+  /**
    * Enable motors with the given microstep mode.
    * EBB firmware convention (DO NOT GUESS — this is inverted from what the
    * name suggests): 0=disable, 1=1/16, 2=1/8, 3=1/4, 4=1/2, 5=full step.

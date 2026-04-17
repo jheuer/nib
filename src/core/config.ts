@@ -20,17 +20,43 @@ export interface GlobalConfig {
   model?: string
   port?: string
   historyLimit?: number
+  /**
+   * Registry of named machines. The key is the name stored in the EBB board's
+   * EEPROM via the `QN`/`SN` commands — nib reads that on connect and looks
+   * up the matching entry to pick the envelope and any per-machine tuning.
+   * Lets one computer drive multiple AxiDraws without per-plot `--model` flags.
+   */
+  machines?: Record<string, MachineEntry>
+}
+
+/** Per-machine config, keyed by the board's QN name. */
+export interface MachineEntry {
+  model?: string
+  /** Explicit envelope string like "430x297" — takes precedence over `model`. */
+  envelope?: string
+  marginMm?: number
+  description?: string
 }
 
 export async function loadGlobalConfig(): Promise<GlobalConfig> {
   if (!existsSync(GLOBAL_CONFIG_PATH)) return {}
   const raw = await readFile(GLOBAL_CONFIG_PATH, 'utf-8')
   const data = parse(raw) as Record<string, unknown>
+  const machinesRaw = data['machines'] as Record<string, Record<string, unknown>> | undefined
+  const machines = machinesRaw
+    ? Object.fromEntries(Object.entries(machinesRaw).map(([name, m]) => [name, {
+        model: m['model'] as string | undefined,
+        envelope: m['envelope'] as string | undefined,
+        marginMm: m['margin_mm'] as number | undefined,
+        description: m['description'] as string | undefined,
+      } satisfies MachineEntry]))
+    : undefined
   return {
     defaultProfile: data['default_profile'] as string | undefined,
     model: data['model'] as string | undefined,
     port: data['port'] as string | undefined,
     historyLimit: data['history_limit'] as number | undefined,
+    machines,
   }
 }
 
@@ -41,7 +67,38 @@ export async function saveGlobalConfig(config: GlobalConfig): Promise<void> {
   if (config.model) data['model'] = config.model
   if (config.port) data['port'] = config.port
   if (config.historyLimit) data['history_limit'] = config.historyLimit
+  if (config.machines && Object.keys(config.machines).length > 0) {
+    data['machines'] = Object.fromEntries(Object.entries(config.machines).map(([name, m]) => {
+      const entry: Record<string, unknown> = {}
+      if (m.model)        entry['model']       = m.model
+      if (m.envelope)     entry['envelope']    = m.envelope
+      if (m.marginMm !== undefined) entry['margin_mm'] = m.marginMm
+      if (m.description)  entry['description'] = m.description
+      return [name, entry]
+    }))
+  }
   await writeFile(GLOBAL_CONFIG_PATH, stringify(data), 'utf-8')
+}
+
+/** Get a machine entry by name. */
+export async function getMachine(name: string): Promise<MachineEntry | null> {
+  const g = await loadGlobalConfig()
+  return g.machines?.[name] ?? null
+}
+
+/** Register / update a machine entry. */
+export async function upsertMachine(name: string, entry: MachineEntry): Promise<void> {
+  const g = await loadGlobalConfig()
+  g.machines = { ...(g.machines ?? {}), [name]: entry }
+  await saveGlobalConfig(g)
+}
+
+/** Remove a machine entry. No-op if it doesn't exist. */
+export async function deleteMachine(name: string): Promise<void> {
+  const g = await loadGlobalConfig()
+  if (!g.machines?.[name]) return
+  delete g.machines[name]
+  await saveGlobalConfig(g)
 }
 
 // ─── Per-project config (axidraw.toml) ───────────────────────────────────────
@@ -249,6 +306,8 @@ function deserializeProfile(raw: Record<string, unknown>): Profile {
   if (typeof raw['accel_cap_mms2']       === 'number') profile.accelCapMms2       = raw['accel_cap_mms2'] as number
   if (typeof raw['junction_deviation_mm']=== 'number') profile.junctionDeviationMm= raw['junction_deviation_mm'] as number
   if (typeof raw['servo_idle_ms']        === 'number') profile.servoIdleMs        = raw['servo_idle_ms'] as number
+  if (typeof raw['nib_size_mm']          === 'number') profile.nibSizeMm          = raw['nib_size_mm'] as number
+  if (typeof raw['color']                === 'string') profile.color              = raw['color'] as string
   return profile
 }
 
@@ -267,6 +326,8 @@ function serializeProfile(profile: Profile): Record<string, unknown> {
   if (profile.accelCapMms2        !== undefined) out['accel_cap_mms2']        = profile.accelCapMms2
   if (profile.junctionDeviationMm !== undefined) out['junction_deviation_mm'] = profile.junctionDeviationMm
   if (profile.servoIdleMs         !== undefined) out['servo_idle_ms']         = profile.servoIdleMs
+  if (profile.nibSizeMm           !== undefined) out['nib_size_mm']           = profile.nibSizeMm
+  if (profile.color               !== undefined) out['color']                 = profile.color
   return out
 }
 
@@ -339,15 +400,28 @@ import { resolveEnvelope, parseEnvelope, type Envelope } from './envelope.ts'
 export const DEFAULT_MARGIN_MM = 5
 
 /**
- * Resolve the machine envelope from any of:
+ * Resolve the machine envelope from any of (highest → lowest precedence):
+ *   - registered machine entry matching `machineName` (set via `nib machine
+ *     register`, keyed by the board's QN EEPROM name)
  *   - project.envelope (explicit "WxH" override)
  *   - project.model (name like "V3A3")
  *   - global.model (name)
  * Returns null if nothing matches — bounds checks are a no-op in that case.
  */
-export async function getMachineEnvelope(): Promise<Envelope | null> {
+export async function getMachineEnvelope(machineName?: string): Promise<Envelope | null> {
   const project = await loadProjectConfig()
   const global = await loadGlobalConfig()
+  if (machineName) {
+    const entry = global.machines?.[machineName]
+    if (entry?.envelope) {
+      const parsed = parseEnvelope(entry.envelope)
+      if (parsed) return parsed
+    }
+    if (entry?.model) {
+      const e = resolveEnvelope(entry.model)
+      if (e) return e
+    }
+  }
   if (project?.envelope) {
     const parsed = parseEnvelope(project.envelope)
     if (parsed) return parsed
@@ -370,11 +444,14 @@ export async function getMachineEnvelope(): Promise<Envelope | null> {
  *
  * Returns null if no envelope is configured (bounds checks disabled).
  */
-export async function getEffectiveEnvelope(): Promise<{ envelope: Envelope; marginMm: number } | null> {
-  const envelope = await getMachineEnvelope()
+export async function getEffectiveEnvelope(machineName?: string): Promise<{ envelope: Envelope; marginMm: number } | null> {
+  const envelope = await getMachineEnvelope(machineName)
   if (!envelope) return null
   const project = await loadProjectConfig()
-  const marginMm = project?.marginMm ?? DEFAULT_MARGIN_MM
+  const global = await loadGlobalConfig()
+  // Precedence for margin mirrors the envelope: registered machine → project → default.
+  const machineMargin = machineName ? global.machines?.[machineName]?.marginMm : undefined
+  const marginMm = machineMargin ?? project?.marginMm ?? DEFAULT_MARGIN_MM
   return { envelope, marginMm }
 }
 

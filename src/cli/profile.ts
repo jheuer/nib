@@ -26,6 +26,8 @@ const create = defineCommand({
     accel:        { type: 'string', description: 'Acceleration 1–100',  default: '75' },
     'const-speed': { type: 'boolean', description: 'Constant speed mode', default: false },
     description:  { type: 'string', description: 'Description, e.g. "Staedtler 0.3mm"' },
+    'nib-size':   { type: 'string', description: 'Physical nib diameter in mm (e.g. 0.3)' },
+    color:        { type: 'string', description: 'Ink colour (CSS colour string, e.g. "#222")' },
   },
   async run({ args }) {
     const existing = await getProfile(args.name)
@@ -56,6 +58,8 @@ const create = defineCommand({
       accel,
       constSpeed:   args['const-speed'] || undefined,
       description:  args.description,
+      nibSizeMm:    args['nib-size'] !== undefined ? parseFloat(args['nib-size']) : undefined,
+      color:        args.color,
     }
     await saveProfile(args.name, profile)
     process.stderr.write(`  ${ok(`profile "${chalk.bold(args.name)}" created`)}\n`)
@@ -114,6 +118,13 @@ const show = defineCommand({
     process.stderr.write(`  ${chalk.dim('pen-up:')}       ${p.penPosUp}\n`)
     process.stderr.write(`  ${chalk.dim('accel:')}        ${p.accel}%\n`)
     if (p.constSpeed) process.stderr.write(`  ${chalk.dim('const-speed:')}  true\n`)
+    if (p.nibSizeMm !== undefined) process.stderr.write(`  ${chalk.dim('nib-size:')}     ${p.nibSizeMm} mm\n`)
+    if (p.color) process.stderr.write(`  ${chalk.dim('color:')}        ${p.color}\n`)
+    if (p.speedCapMms !== undefined)         process.stderr.write(`  ${chalk.dim('speed-cap:')}    ${p.speedCapMms} mm/s (pen-down)\n`)
+    if (p.speedCapUpMms !== undefined)       process.stderr.write(`  ${chalk.dim('speed-cap-up:')} ${p.speedCapUpMms} mm/s (pen-up)\n`)
+    if (p.accelCapMms2 !== undefined)        process.stderr.write(`  ${chalk.dim('accel-cap:')}    ${p.accelCapMms2} mm/s²\n`)
+    if (p.junctionDeviationMm !== undefined) process.stderr.write(`  ${chalk.dim('junction-dev:')} ${p.junctionDeviationMm} mm\n`)
+    if (p.servoIdleMs !== undefined)         process.stderr.write(`  ${chalk.dim('servo-idle:')}   ${p.servoIdleMs} ms\n`)
 
     // Wear stats
     if (wear.totalM > 0 || wear.jobs > 0) {
@@ -149,6 +160,8 @@ const set = defineCommand({
     accel:         { type: 'string', description: 'Acceleration 1–100' },
     'const-speed': { type: 'boolean', description: 'Constant speed mode' },
     description:   { type: 'string', description: 'Description text' },
+    'nib-size':    { type: 'string', description: 'Physical nib diameter in mm (e.g. 0.3)' },
+    color:         { type: 'string', description: 'Ink colour (CSS colour string)' },
   },
   async run({ args }) {
     const existing = await getProfile(args.name)
@@ -165,6 +178,8 @@ const set = defineCommand({
     if (args.accel         !== undefined) overrides.accel        = parseInt(args.accel,         10)
     if (args['const-speed'] !== undefined) overrides.constSpeed  = args['const-speed'] || undefined
     if (args.description   !== undefined) overrides.description  = args.description
+    if (args['nib-size']   !== undefined) overrides.nibSizeMm    = parseFloat(args['nib-size'])
+    if (args.color         !== undefined) overrides.color        = args.color
 
     if (Object.keys(overrides).length === 0) {
       printUsageError('no fields specified — nothing to update')

@@ -1,12 +1,15 @@
 import { defineCommand } from 'citty'
+import chalk from 'chalk'
 import { readFile } from 'fs/promises'
 import { existsSync } from 'fs'
 import { resolve } from 'path'
 import { homedir } from 'os'
-import { resolveProfile, loadProjectConfig, addProfileWear, penWearWarning, incrementSession, getMachineEnvelope, getEffectiveEnvelope } from '../core/config.ts'
+import { resolveProfile, loadProjectConfig, addProfileWear, penWearWarning, incrementSession, getMachineEnvelope, getEffectiveEnvelope, loadGlobalConfig } from '../core/config.ts'
+import { connectEbb } from '../backends/node-serial.ts'
 import { findFirstOutOfBounds } from '../core/envelope.ts'
 import { svgToMoves } from '../backends/svg-to-moves.ts'
 import { rotateMoves } from '../core/stroke.ts'
+import { resolveAutoRotate } from '../core/auto-rotate.ts'
 import { createJob } from '../core/job.ts'
 import { nextJobId, saveJob } from '../core/history.ts'
 import { PlotEmitter } from '../core/events.ts'
@@ -68,7 +71,7 @@ export const plotCmd = defineCommand({
     },
     rotate: {
       type: 'string',
-      description: 'Rotate content by N degrees (90 / 180 / 270) before plotting. Applied around bbox center.',
+      description: 'Rotate content before plotting. "auto" (default) fits portrait SVGs to landscape machines and vice-versa. Use "none" to disable, or a number of degrees for explicit rotation.',
     },
     guided: {
       type: 'boolean',
@@ -188,28 +191,72 @@ export const plotCmd = defineCommand({
       })
     }
 
+    // ── Auto-apply registered machine envelope (QN/SN) ───────────────────────
+    // If the user has registered machines via `nib machine register`, briefly
+    // connect to the board, read its EEPROM name (QN), and use the matching
+    // entry's envelope. This lets one host drive multiple AxiDraws without
+    // per-plot `--model` flags. Costs ~100ms and is skipped if no machines
+    // are registered.
+    let machineName: string | undefined
+    {
+      const gcfg = await loadGlobalConfig()
+      if (gcfg.machines && Object.keys(gcfg.machines).length > 0) {
+        try {
+          const ebb = await connectEbb(port)
+          try { machineName = (await ebb.queryName()) || undefined }
+          finally { await ebb.close() }
+          if (machineName && gcfg.machines[machineName]) {
+            process.stderr.write(`  ${chalk.dim('Machine:')}  ${machineName}${gcfg.machines[machineName].description ? chalk.dim(` · ${gcfg.machines[machineName].description}`) : ''}\n`)
+          } else if (machineName) {
+            printWarning(`board is tagged "${machineName}" but no matching entry in nib config — run: nib machine register ${machineName}`)
+          }
+        } catch (err) {
+          printWarning(`could not query board name: ${(err as Error).message}`)
+        }
+      }
+    }
+
+    // ── Resolve rotation (incl. axicli-style auto) ───────────────────────────
+    // Auto-detect portrait/landscape mismatch between the SVG and the machine
+    // envelope — this matches axicli default behaviour. Runs once here and
+    // reused for both the pre-flight envelope check and the actual plot call.
+    const eff = await getEffectiveEnvelope(machineName)
+    const svgStatsEarly = await getSvgStats(processedSvg)
+    let rotateDeg: number
+    try {
+      const rot = resolveAutoRotate(args.rotate, {
+        svgWidthMm:      svgStatsEarly.widthMm,
+        svgHeightMm:     svgStatsEarly.heightMm,
+        envelopeWidthMm:  eff?.envelope.widthMm  ?? null,
+        envelopeHeightMm: eff?.envelope.heightMm ?? null,
+      })
+      rotateDeg = rot.degrees
+      if (rot.auto && rot.degrees !== 0) {
+        process.stderr.write(`  ${chalk.dim(`Auto-rotate:`)} ${rot.degrees}° (${rot.reason}). ${chalk.dim('Override with --rotate none.')}\n`)
+      }
+    } catch (err) {
+      printError((err as Error).message)
+      process.exit(2)
+    }
+
     // ── Pre-flight envelope check ────────────────────────────────────────────
     // If the user has configured a machine model or envelope, walk the SVG
     // moves and refuse to start if any point would drive the arm past its
     // physical limit (minus the configured safety margin). Skipped when no
     // envelope is configured.
-    {
-      const eff = await getEffectiveEnvelope()
-      if (eff) {
-        const preflightRotate = args.rotate !== undefined ? parseFloat(args.rotate) : 0
-        const rawPreflight = svgToMoves(processedSvg, { tolerance: 0.1 })
-        const moves = preflightRotate ? rotateMoves(rawPreflight, preflightRotate) : rawPreflight
-        const offender = findFirstOutOfBounds(moves, eff.envelope, eff.marginMm)
-        if (offender) {
-          const safeW = eff.envelope.widthMm  - 2 * eff.marginMm
-          const safeH = eff.envelope.heightMm - 2 * eff.marginMm
-          printError(
-            `SVG exceeds safe envelope (${safeW} × ${safeH} mm = machine minus ${eff.marginMm}mm margin)`,
-            `point (${offender.point.x.toFixed(1)}, ${offender.point.y.toFixed(1)}) is outside bounds — ` +
-            `re-scale the SVG, pick a larger model, lower margin_mm, or clear axidraw.toml's envelope`,
-          )
-          process.exit(1)
-        }
+    if (eff) {
+      const rawPreflight = svgToMoves(processedSvg, { tolerance: 0.1 })
+      const moves = rotateDeg ? rotateMoves(rawPreflight, rotateDeg) : rawPreflight
+      const offender = findFirstOutOfBounds(moves, eff.envelope, eff.marginMm)
+      if (offender) {
+        const safeW = eff.envelope.widthMm  - 2 * eff.marginMm
+        const safeH = eff.envelope.heightMm - 2 * eff.marginMm
+        printError(
+          `SVG exceeds safe envelope (${safeW} × ${safeH} mm = machine minus ${eff.marginMm}mm margin)`,
+          `point (${offender.point.x.toFixed(1)}, ${offender.point.y.toFixed(1)}) is outside bounds — ` +
+          `re-scale the SVG, pick a larger model, lower margin_mm, or clear axidraw.toml's envelope`,
+        )
+        process.exit(1)
       }
     }
 
@@ -352,27 +399,33 @@ export const plotCmd = defineCommand({
     job.startedAt = startedAt
     await saveJob(job)
 
-    // Override SIGINT during plot to pause instead of hard-exit
+    // Override SIGINT during plot: first ^C pauses (immediate feedback +
+    // backend ES so motors stop within ~100ms); second ^C is a hard quit.
     const controller = new AbortController()
     let pauseHandled = false
 
-    const sigintHandler = async () => {
-      if (pauseHandled) return
+    const sigintHandler = () => {
+      if (pauseHandled) {
+        process.stderr.write('\n  Force quit.\n')
+        process.exit(130)
+      }
       pauseHandled = true
+      // Print feedback BEFORE awaiting the backend's abort path, so the user
+      // sees the ^C was heard even while the firmware processes ES.
+      process.stderr.write(`\n  ${chalk.yellow('Pausing')} — stopping motors (press Ctrl-C again to force-quit)…\n`)
       controller.abort()
     }
 
-    // Remove the global SIGINT handler (set in cli/index.ts) temporarily
+    // Remove the global SIGINT handler (set in cli/index.ts) temporarily.
+    // Use on() not once() so a second ^C still has a handler attached.
     process.removeAllListeners('SIGINT')
-    process.once('SIGINT', sigintHandler)
+    process.on('SIGINT', sigintHandler)
 
     try {
       const layerNum = args.layer !== undefined ? parseInt(args.layer, 10) : undefined
-      const eff = await getEffectiveEnvelope()
       const simplifyMm = args.simplify !== undefined
         ? parseFloat(args.simplify)
         : projectConfig?.simplifyMm
-      const rotateDeg = args.rotate !== undefined ? parseFloat(args.rotate) : 0
       const result = await runJobEbb(
         job, emitter,
         {
@@ -387,22 +440,28 @@ export const plotCmd = defineCommand({
       )
 
       if (result.aborted) {
-        // Paused — ask what to do
+        // Paused — the backend stopped motors (ES) but did NOT home, so the
+        // arm is parked at whatever mid-stroke position it reached.
         const choice = await promptPause(result.stoppedAt)
 
         if (choice === 'resume') {
-          process.stderr.write(`  Resuming from ${Math.round(result.stoppedAt * 100)}%…\n`)
+          process.stderr.write(`  Homing, then resuming from ${Math.round(result.stoppedAt * 100)}%…\n`)
           controller.abort()  // reset, re-run
           job.status = 'pending'
-          // Recurse: re-invoke the runner without the pause handler
-          await doPlot(job, emitter, port, result.stoppedAt)
+          // Recurse with resumeFrom; the new connect() inside runJobEbb will
+          // issue HM first (see homeBeforeRun: true) so the arm is at a known
+          // origin before we re-issue moves.
+          await doPlot(job, emitter, port, result.stoppedAt, { homeBeforeRun: true })
         } else {
           job.status = 'aborted'
           job.stoppedAt = result.stoppedAt
-          process.stderr.write(`  Job #${id} saved (aborted at ${Math.round(result.stoppedAt * 100)}%).\n\n`)
+          process.stderr.write(`  Job #${id} saved (aborted at ${Math.round(result.stoppedAt * 100)}%).\n`)
+          process.stderr.write(`  ${chalk.dim('Arm position unknown — run')} ${chalk.cyan('nib home')} ${chalk.dim('before your next plot.')}\n\n`)
+          // Arm position is stale (we skipped home on pause). Flag it so the
+          // next plot requires a manual home first.
+          await markArmUnknown()
+          return
         }
-        // Aborted mid-plot — the backend homes on abort so the arm is at (0,0).
-        await resetArmState()
         return
       }
 
@@ -472,8 +531,13 @@ async function doPlot(
   emitter: PlotEmitter,
   port: string | undefined,
   fromFraction: number,
+  opts: { homeBeforeRun?: boolean } = {},
 ): Promise<void> {
-  const result = await runJobEbb(job, emitter, { port, startFrom: fromFraction })
+  const result = await runJobEbb(job, emitter, {
+    port,
+    startFrom: fromFraction,
+    homeBeforeRun: opts.homeBeforeRun,
+  })
   if (!result.aborted) {
     emitter.emit('complete', job.metrics)
   }
