@@ -307,59 +307,48 @@ async function openBrowserPreview(
   const showEnvelope = !!opts.envelope
   const margin = opts.marginMm ?? 0
 
-  // Envelope outline + dashed margin inset + home corner marker + gantry/
-  // traverse schematic. AxiDraw convention: +X runs along the long rails
-  // (the gantry beam slides along X), +Y runs along the gantry beam (the
-  // pen carriage slides along Y). The schematic shows the gantry beam in
-  // its home position at X=0 with an arrow indicating the gantry's travel
-  // direction and the pen carriage shown on the beam at Y=0.
-  //
-  // Drawn BEHIND the user content (appears before it in document order) so
-  // plotted strokes always render on top — the schematic is decoration,
-  // not content.
   // AxiDraw mechanical schematic, to-scale with the envelope. SE/A3 layout:
-  //   - Gantry rail: the heavy black extrusion that runs along +X below the
-  //     page. The traverse arm slides along it.
-  //   - Traverse arm: the aluminium beam that crosses the page perpendicular
-  //     to the gantry rail, sliding along +X (here shown at its home X=0).
-  //     The pen carriage rides the traverse arm along +Y.
-  //   - Home is the corner where both axes read 0. +X extends across the
-  //     page; -X is behind the home block. +Y extends down the traverse arm;
-  //     -Y is past the end-cap (not reachable).
-  //
-  // Both parts are drawn to scale against the envelope so the user can see
-  // the physical extents of the machine relative to their content.
+  //   - Gantry rail: the heavy black extrusion running along +X above the
+  //     page (Y < 0). Traverse arm slides along it.
+  //   - Traverse arm: the aluminium beam at home X=0, extending DOWN (+Y)
+  //     from the rail across the page. Pen carriage rides along +Y.
+  //   - Home is the corner where both axes read 0 — the pen at (0,0) sits
+  //     right under the rail, at the root of the traverse arm. On paper,
+  //     that's the top-left corner.
+  //   - +X extends rightward across the page along the rail.
+  //   - +Y extends downward across the page along the traverse arm.
   const railBlack = '#1c1c1c'
   const armSilver = '#d5d8dc'
   const armEdge   = '#8a8e94'
   const labelInk  = '#666'
   const gantryRailH  = 14   // mm — thickness of the black base extrusion
   const traverseArmW = 10   // mm — thickness of the silver beam
-  const homeBlockW = 18     // mm — home-end control box (stepper + PCB)
-  const homeBlockH = gantryRailH + 6
-  const farBlockW  = 6
-  const railTop = envH + 8                      // top of gantry rail, 8mm below page
-  const railBottom = railTop + gantryRailH
+  const homeBlockW   = 18   // mm — home-end control box (stepper + PCB)
+  const homeBlockH   = gantryRailH + 6
+  const farBlockW    = 6
+  const railBottom = -8                          // rail's bottom edge, 8mm above the page
+  const railTop    = railBottom - gantryRailH
   const gantryOverlay = showEnvelope ? `
-    <!-- Gantry rail: thick black extrusion running below the envelope -->
-    <rect x="${-homeBlockW + homeBlockW - 2}" y="${railTop}" width="${envW + farBlockW + 2}" height="${gantryRailH}" fill="${railBlack}" stroke="none"/>
-    <!-- Belt line along the rail, subtle silver highlight -->
-    <line x1="${-homeBlockW + homeBlockW}" y1="${railTop + gantryRailH / 2}" x2="${envW + farBlockW}" y2="${railTop + gantryRailH / 2}" stroke="${armSilver}" stroke-width="0.3" stroke-dasharray="1.4,1"/>
-    <!-- Home-end: control box + stepper, sits at X=0 -->
+    <!-- Gantry rail: thick black extrusion running ABOVE the envelope -->
+    <rect x="-2" y="${railTop}" width="${envW + farBlockW + 2}" height="${gantryRailH}" fill="${railBlack}" stroke="none"/>
+    <!-- Belt line centered on the rail -->
+    <line x1="0" y1="${railTop + gantryRailH / 2}" x2="${envW + farBlockW}" y2="${railTop + gantryRailH / 2}" stroke="${armSilver}" stroke-width="0.3" stroke-dasharray="1.4,1"/>
+    <!-- Home-end: control box + stepper at X=0 (top-left corner) -->
     <rect x="${-homeBlockW}" y="${railTop - 3}" width="${homeBlockW}" height="${homeBlockH}" fill="${railBlack}" stroke="none" rx="0.6"/>
     <text x="${-homeBlockW / 2}" y="${railTop + gantryRailH / 2 + 1}" text-anchor="middle" font-family="sans-serif" font-size="2.8" fill="white" font-weight="600">Home</text>
     <!-- Far-end idler bracket -->
     <rect x="${envW + 2}" y="${railTop - 1}" width="${farBlockW}" height="${gantryRailH + 2}" fill="${railBlack}" stroke="none" rx="0.4"/>
-    <!-- Traverse arm: silver aluminium beam at home X=0, spans Y = 0..envH.
-         Extends slightly past the page on both ends and connects to the rail. -->
-    <rect x="${-traverseArmW / 2}" y="-4" width="${traverseArmW}" height="${envH + 4 + (railBottom - envH)}" fill="${armSilver}" stroke="${armEdge}" stroke-width="0.2" rx="0.4"/>
+    <!-- Traverse arm: silver beam at home X=0, extends from just below the
+         rail down past the page, so it's visually anchored to the rail. -->
+    <rect x="${-traverseArmW / 2}" y="${railBottom}" width="${traverseArmW}" height="${envH + 4 - railBottom}" fill="${armSilver}" stroke="${armEdge}" stroke-width="0.2" rx="0.4"/>
     <!-- Arm-to-rail carriage block (sits ON the rail at current X=0) -->
     <rect x="${-traverseArmW / 2 - 2}" y="${railTop - 1}" width="${traverseArmW + 4}" height="${gantryRailH + 2}" fill="${armEdge}" stroke="none" rx="0.5"/>
-    <!-- Pen carriage at (0,0) on the traverse arm -->
+    <!-- Pen carriage at home (0,0): rests at the top of the arm, right under
+         the rail — physically adjacent to where home lives on a real machine. -->
     <rect x="${-traverseArmW / 2 - 1}" y="-3" width="${traverseArmW + 2}" height="6" fill="${armEdge}" stroke="none" rx="0.3"/>
-    <!-- Travel arrows: +X along bottom, +Y down the right side -->
+    <!-- Travel-direction arrows: +X along bottom, +Y along right -->
     <g stroke="${labelInk}" stroke-width="0.4" fill="none">
-      <g transform="translate(${envW / 2}, ${railBottom + 10})">
+      <g transform="translate(${envW / 2}, ${envH + 8})">
         <line x1="-18" y1="0" x2="18" y2="0"/>
         <line x1="18" y1="0" x2="14" y2="-1.8"/>
         <line x1="18" y1="0" x2="14" y2="1.8"/>
@@ -371,13 +360,8 @@ async function openBrowserPreview(
       </g>
     </g>
     <g font-family="sans-serif" font-size="3" fill="${labelInk}">
-      <text x="${envW / 2}" y="${railBottom + 14.5}" text-anchor="middle">+X  ·  traverse along gantry rail</text>
+      <text x="${envW / 2}" y="${envH + 12.5}" text-anchor="middle">+X  ·  traverse along gantry rail</text>
       <text x="${envW + 16}" y="${envH / 2}" text-anchor="middle" transform="rotate(90 ${envW + 16} ${envH / 2})">+Y  ·  pen along traverse arm</text>
-    </g>
-    <!-- Non-reachable direction markers near home -->
-    <g font-family="sans-serif" font-size="2.2" fill="#b4b7bc">
-      <text x="-4" y="${envH / 2}" text-anchor="end" transform="rotate(-90 -4 ${envH / 2})">−Y (past arm end)</text>
-      <text x="${envW / 2}" y="-4" text-anchor="middle">−X (behind home block)</text>
     </g>
   ` : ''
 
@@ -385,12 +369,13 @@ async function openBrowserPreview(
     <rect x="0" y="0" width="${envW}" height="${envH}" fill="white" stroke="#999" stroke-width="0.3"/>
     ${margin > 0 ? `<rect x="${margin}" y="${margin}" width="${envW - 2 * margin}" height="${envH - 2 * margin}" fill="none" stroke="#c8c8c8" stroke-dasharray="1.5,1" stroke-width="0.2"/>` : ''}
     ${gantryOverlay}
+    <!-- Small red crosshair at (0,0) — the "Home" label on the rail block
+         is the textual callout; the crosshair just marks the precise origin. -->
     <g stroke="#d33" stroke-width="0.25" fill="none">
-      <circle cx="0" cy="0" r="1.5"/>
-      <line x1="-3" y1="0" x2="3" y2="0"/>
-      <line x1="0" y1="-3" x2="0" y2="3"/>
+      <circle cx="0" cy="0" r="1.2"/>
+      <line x1="-2.4" y1="0" x2="2.4" y2="0"/>
+      <line x1="0" y1="-2.4" x2="0" y2="2.4"/>
     </g>
-    <text x="3.5" y="4.5" font-family="sans-serif" font-size="3.5" fill="#d33">home (0,0)</text>
   ` : ''
 
   // Extract the user's SVG body (everything between <svg> and </svg>) so we
@@ -401,12 +386,12 @@ async function openBrowserPreview(
   const userViewBox = userViewBoxMatch ? userViewBoxMatch[1] : `0 0 ${cw} ${ch}`
 
   // When the envelope overlay is on, pad the outer viewBox enough to fit the
-  // home-block extension (left), the gantry rail + arrows (below), and the
-  // Y-axis label (right).
+  // home-block extension (left), the gantry rail + Home label (above), and
+  // the arrow labels below and on the right.
   const padLeft   = showEnvelope ? 22 : 0
   const padRight  = showEnvelope ? 24 : 0
-  const padTop    = showEnvelope ?  8 : 0
-  const padBottom = showEnvelope ? 32 : 0
+  const padTop    = showEnvelope ? 30 : 0
+  const padBottom = showEnvelope ? 18 : 0
   const composite = `<svg xmlns="http://www.w3.org/2000/svg"
        viewBox="${showEnvelope ? `${-padLeft} ${-padTop} ${envW + padLeft + padRight} ${envH + padTop + padBottom}` : `0 0 ${rotatedW} ${rotatedH}`}"
        width="${showEnvelope ? envW + padLeft + padRight : rotatedW}mm"
