@@ -283,8 +283,9 @@ async function openBrowserPreview(
   svg: string, name: string, opts: PreviewOpts,
 ): Promise<void> {
   // Path styling: profile-supplied ink colour + realistic nib width. Applied
-  // via CSS to every geometry element inside the user's SVG.
-  const ink = opts.color ?? '#111'
+  // via CSS to every geometry element inside the user's SVG. Default ink is
+  // black (matches the plotter output when no profile colour is configured).
+  const ink = opts.color ?? '#000'
   const pathStyle = opts.nibSizeMm
     ? `stroke:${ink}; stroke-width:${opts.nibSizeMm}mm; stroke-linecap:round; stroke-linejoin:round; fill:none`
     : `stroke:${ink}; stroke-linecap:round; stroke-linejoin:round; fill:none`
@@ -316,23 +317,54 @@ async function openBrowserPreview(
   // Drawn BEHIND the user content (appears before it in document order) so
   // plotted strokes always render on top — the schematic is decoration,
   // not content.
-  const gantryStroke = '#c8d4e5'  // soft blue-grey
+  // AxiDraw mechanical schematic, to-scale with the envelope. Modeled on the
+  // SE/A3 layout:
+  //   - A long horizontal base rail below the page carrying the gantry beam
+  //     along +X. The home-end (control box + stepper) sits at X=0 and is
+  //     labelled "Home"; a smaller idler bracket closes the far end.
+  //   - The gantry beam itself crosses the page vertically at X=0 (its home
+  //     position) and carries the pen carriage along +Y.
+  //   - The pen carriage starts at (0,0) on the beam.
+  // Soft blue-grey stroke so the schematic sits clearly behind the user's
+  // content — it's a spatial reference, not the subject.
+  const rail = '#c8d4e5'
+  const railDark = '#8ba1bd'
+  const homeBlockW = 16  // mm — home-end control box
+  const homeBlockH = 10
+  const farBlockW = 6    // mm — idler bracket at opposite end
+  const farBlockH = 8
+  const railY = envH + 6
   const gantryOverlay = showEnvelope ? `
-    <g stroke="${gantryStroke}" fill="none" stroke-linecap="round">
-      <!-- gantry beam at home X=0, full height -->
-      <line x1="0" y1="0" x2="0" y2="${envH}" stroke-width="1.4"/>
-      <!-- pen carriage on gantry at home Y=0 -->
-      <rect x="-2.2" y="-2.2" width="4.4" height="4.4" fill="${gantryStroke}" stroke="none"/>
-      <!-- gantry travel arrow along +X (slight inset from envelope edge) -->
-      <g stroke-width="0.4" transform="translate(${envW * 0.5}, ${envH + 3})">
+    <!-- Base rail: long strip running along +X below the envelope -->
+    <g stroke="${rail}" fill="none" stroke-linecap="round">
+      <line x1="${homeBlockW}" y1="${railY}" x2="${envW - farBlockW}" y2="${railY}" stroke-width="0.6"/>
+      <line x1="${homeBlockW}" y1="${railY + 1.5}" x2="${envW - farBlockW}" y2="${railY + 1.5}" stroke-width="0.3" stroke-dasharray="1,0.8"/>
+    </g>
+    <!-- Home-end: control box + stepper block at X=0 -->
+    <g>
+      <rect x="${-homeBlockW + 0}" y="${railY - homeBlockH / 2}" width="${homeBlockW}" height="${homeBlockH}" fill="${railDark}" stroke="none" rx="0.5"/>
+      <text x="${-homeBlockW / 2}" y="${railY + 1}" text-anchor="middle" font-family="sans-serif" font-size="2.4" fill="white">Home</text>
+    </g>
+    <!-- Far-end idler bracket at X=envW -->
+    <rect x="${envW}" y="${railY - farBlockH / 2}" width="${farBlockW}" height="${farBlockH}" fill="${railDark}" stroke="none" rx="0.5"/>
+    <!-- Gantry beam: vertical bar at current home X=0 crossing the page -->
+    <g stroke="${railDark}" fill="none">
+      <line x1="0" y1="-2" x2="0" y2="${envH + 2}" stroke-width="1.4"/>
+      <!-- beam end-cap at the base-rail side, sits on the rail -->
+      <rect x="-3" y="${envH + 2}" width="6" height="${railY - envH - 2 + 0.5}" fill="${railDark}" stroke="none" rx="0.3"/>
+    </g>
+    <!-- Pen carriage at (0,0) on the beam -->
+    <rect x="-2.6" y="-2.6" width="5.2" height="5.2" fill="${railDark}" stroke="none" rx="0.3"/>
+    <!-- Travel arrows -->
+    <g stroke="${railDark}" stroke-width="0.4" fill="none">
+      <g transform="translate(${envW * 0.5}, ${railY + 10})">
         <line x1="-14" y1="0" x2="14" y2="0"/>
         <line x1="14" y1="0" x2="11" y2="-1.5"/>
         <line x1="14" y1="0" x2="11" y2="1.5"/>
         <line x1="-14" y1="0" x2="-11" y2="-1.5"/>
         <line x1="-14" y1="0" x2="-11" y2="1.5"/>
       </g>
-      <!-- pen travel arrow along +Y -->
-      <g stroke-width="0.4" transform="translate(${envW + 3}, ${envH * 0.5}) rotate(90)">
+      <g transform="translate(${envW + 10}, ${envH * 0.5}) rotate(90)">
         <line x1="-14" y1="0" x2="14" y2="0"/>
         <line x1="14" y1="0" x2="11" y2="-1.5"/>
         <line x1="14" y1="0" x2="11" y2="1.5"/>
@@ -340,10 +372,9 @@ async function openBrowserPreview(
         <line x1="-14" y1="0" x2="-11" y2="1.5"/>
       </g>
     </g>
-    <g font-family="sans-serif" font-size="2.6" fill="#8aa3bd">
-      <text x="${envW * 0.5}" y="${envH + 7}" text-anchor="middle">gantry travel · X</text>
-      <text x="${envW + 7}" y="${envH * 0.5}" text-anchor="middle" transform="rotate(90 ${envW + 7} ${envH * 0.5})">pen travel · Y</text>
-      <text x="2" y="${envH / 2}" fill="${gantryStroke}" text-anchor="start" transform="rotate(-90 2 ${envH / 2})">gantry beam</text>
+    <g font-family="sans-serif" font-size="2.6" fill="${railDark}">
+      <text x="${envW * 0.5}" y="${railY + 14}" text-anchor="middle">gantry travel · X</text>
+      <text x="${envW + 14}" y="${envH * 0.5}" text-anchor="middle" transform="rotate(90 ${envW + 14} ${envH * 0.5})">pen travel · Y</text>
     </g>
   ` : ''
 
@@ -367,15 +398,16 @@ async function openBrowserPreview(
   const userViewBox = userViewBoxMatch ? userViewBoxMatch[1] : `0 0 ${cw} ${ch}`
 
   // When the envelope overlay is on, pad the outer viewBox enough to fit the
-  // gantry-travel label on the bottom and the pen-travel label on the right.
-  const pad = showEnvelope ? 14 : 0
+  // home-block extension (left), the schematic rail + arrows (below), and the
+  // Y-axis label (right).
+  const pad = showEnvelope ? 26 : 0
   const composite = `<svg xmlns="http://www.w3.org/2000/svg"
        viewBox="${showEnvelope ? `${-pad} ${-pad} ${envW + 2 * pad} ${envH + 2 * pad}` : `0 0 ${rotatedW} ${rotatedH}`}"
        width="${showEnvelope ? envW + 2 * pad : rotatedW}mm"
        height="${showEnvelope ? envH + 2 * pad : rotatedH}mm"
        style="max-width:90vw;max-height:90vh">
     ${envelopeOverlay}
-    <g transform="${rotateTransform}">
+    <g class="user-content" transform="${rotateTransform}">
       <svg x="0" y="0" width="${cw}" height="${ch}" viewBox="${userViewBox}" preserveAspectRatio="xMinYMin meet">
         ${userInner}
       </svg>
@@ -393,7 +425,11 @@ async function openBrowserPreview(
   <style>
     body { background: #f5f0e8; display: flex; align-items: center; justify-content: center; min-height: 100vh; margin: 0; font-family: system-ui, sans-serif; }
     svg { border: 1px solid #ccc; background: white; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
-    svg path, svg polyline, svg line, svg polygon, svg circle, svg ellipse, svg rect.user { ${pathStyle}; }
+    /* Scope path styling to the nested user content only — the envelope rect
+       and schematic live in the outer SVG and must keep their own fills. */
+    .user-content path, .user-content polyline, .user-content line,
+    .user-content polygon, .user-content circle, .user-content ellipse,
+    .user-content rect { ${pathStyle}; }
     .legend { position: fixed; bottom: 1rem; right: 1rem; font-family: ui-monospace, monospace; font-size: 12px; color: #666; text-align: right; line-height: 1.4; }
     .legend .title { color: #333; }
   </style>
