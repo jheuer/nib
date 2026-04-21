@@ -19,11 +19,13 @@ await plotStrokes([
 
 ## Why
 
-The stock `axicli` stack is powerful but Python-based, and the EBB firmware's serial protocol is simple enough that a TypeScript implementation is straightforward. nib is that — built for code-first generative work:
+The stock `axicli` stack is powerful but Python-based, CLI-only, and has no browser story. nib speaks the EBB serial protocol directly from TypeScript and is built for code-first generative work:
 
+- **Works in the browser.** WebSerial transport ships in the same package. Plot from a p5 sketch, a React app, or an interactive canvas — no Node, no server, no Python subprocess.
+- **Live / streaming sessions.** `LivePlotter` keeps the port open and motors armed between submissions. Each `drawStroke()` call plots immediately; subsequent strokes queue if the arm is busy. Useful for interactive sessions where strokes arrive one at a time.
 - **Fast plots.** Native LM motion planning with trapezoidal acceleration and junction-velocity pipelining. Connected strokes don't stop at every internal corner.
-- **Code-first API.** Compose polylines and primitives with a small `geom` module, plot from a script without SVG round-tripping.
-- **Works in the browser.** WebSerial transport ships in the same package — no changes to your pipeline to go from Node to a web app.
+- **Code-first API.** Compose polylines and primitives with `geom`, render Hershey text directly to strokes, plot from a script without SVG round-tripping.
+- **Typed errors.** Programmatic consumers get `PortNotFoundError`, `EnvelopeViolationError`, `DeviceDisconnectedError`, `ValidationError`, `ConfigError` — all subclasses of `NibError` with a `.code` field for `switch` dispatch.
 - **Safe by default.** Machine-envelope bounds check, persistent position state across invocations, confirmation prompts before destructive commands.
 - **No Python dependency.** Communicates directly with the EBB firmware via USB CDC serial (macOS, Linux today; Windows is possible with a serialport dep but not wired in).
 
@@ -161,6 +163,24 @@ const svg = generateSvgForSeed(42)
 await plot(svg, { profile: 'fineliner' })
 ```
 
+SVG support: `<path>`, `<line>`, `<rect>`, `<circle>`, `<ellipse>`, `<polyline>`,
+`<polygon>`, `<text>` (Hershey Simplex), `<use>`. Full affine transform support
+(`translate`, `rotate`, `scale`, `skewX`, `skewY`, `matrix`).
+
+### Hershey text
+
+Render single-stroke plottable text without touching an SVG:
+
+```typescript
+import { hersheyStrokes, hersheyTextWidth } from 'nib'
+
+const strokes = hersheyStrokes('Hello world', x, y, fontSizeMm)
+const w = hersheyTextWidth('Hello world', fontSizeMm)  // for centering / layout
+```
+
+`x, y` is the top-left of the cap-height box (not the baseline). `<text>` elements
+in SVG use the same font automatically.
+
 ### Inline profile (no config-file lookup)
 
 ```typescript
@@ -176,6 +196,22 @@ await plotStrokes([geom.circle({ x: 50, y: 50 }, 20)], {
   },
   optimize: 2,
 })
+```
+
+### Utilities
+
+```typescript
+import { deduplicateStrokes, validateProfile, strokeStats } from 'nib'
+
+// Remove exact-duplicate strokes (forward or reverse) within a mm tolerance
+const clean = deduplicateStrokes(strokes, 0.1)
+
+// Validate a profile object before passing it to plotStrokes
+const errors = validateProfile(profile)   // string[] — empty means valid
+
+// Stroke stats without hardware
+strokeStats(strokes)
+// → { strokeCount, pointCount, pendownMm, bbox }
 ```
 
 ### `geom` module
@@ -201,18 +237,48 @@ geom.scale(strokes, 2)                                  // or { x, y }
 geom.rotate(strokes, Math.PI / 4, pivot?)
 ```
 
-### Offline stats / preview (no hardware)
+### Typed errors
+
+All error paths throw typed subclasses of `NibError`:
 
 ```typescript
-import { previewStatsFromSvg, strokeStats, geom } from 'nib'
+import { NibError, PortNotFoundError, EnvelopeViolationError } from 'nib'
 
-// From an SVG
+try {
+  await plotStrokes(strokes, options)
+} catch (e) {
+  if (e instanceof PortNotFoundError) {
+    console.error('No EBB device found — is the USB cable plugged in?')
+  } else if (e instanceof EnvelopeViolationError) {
+    console.error(`Move to (${e.x}, ${e.y}) exceeds machine envelope`)
+  } else if (e instanceof NibError) {
+    console.error(`Plotter error [${e.code}]: ${e.message}`)
+  } else throw e
+}
+```
+
+Error classes: `PortNotFoundError`, `EnvelopeViolationError`, `DeviceDisconnectedError`, `ValidationError`, `ConfigError`.
+
+### Offline preview (no hardware)
+
+```typescript
+import { renderPreview, renderPreviewSvg, previewStatsFromSvg } from 'nib'
+
+// Paint a to-scale plotter preview onto any CanvasRenderingContext2D
+const stats = renderPreview(moves, ctx, {
+  paper: { widthMm: 210, heightMm: 297 },
+  envelope: { widthMm: 280, heightMm: 218 },
+  inkColor: '#1a3a5c',
+  showTravel: true,
+})
+// stats → { pendownM, travelM, penLifts, travelOverheadPct, contentMm }
+
+// Same output as a self-contained SVG string (no DOM — works in Node, CI)
+const svg = renderPreviewSvg(moves, options)
+
+// Quick stats from an SVG string
 const stats = previewStatsFromSvg(svgString, profile, /* optimize */ 2)
 // → { pendownM, travelM, travelOverheadPct, estimatedS, penLifts, boundingBoxMm, fitsA4, fitsA3 }
-
-// From strokes
-strokeStats(strokes)
-// → { strokeCount, pointCount, pendownMm, bbox }
 ```
 
 ---
@@ -266,6 +332,9 @@ await live.start()
 canvas.addEventListener('pointerup', async () => {
   await live.drawStroke(currentPoints)   // plots now; queues if arm is busy
 })
+
+// Track where the arm is at any point
+console.log(live.currentPosition)   // { x: number, y: number } in mm
 
 // later
 await live.close()   // homes, disables motors, releases the port
@@ -346,8 +415,6 @@ instead of the machine's home corner — i.e. "plot this SVG onto that sheet,"
 which is almost always what you want. Add `--machine-origin` on the CLI to opt
 out and work in raw machine coords.
 
-See [`axidraw-cli-design.md`](./axidraw-cli-design.md) for the full schema.
-
 ### Layer conventions
 
 nib follows the AxiDraw Inkscape layer convention. In Inkscape, name your layers `1 outline`, `2 fills`, `3 hatching`; prefix with `!` to skip:
@@ -419,8 +486,6 @@ handles older boards gracefully:
 - **`src/cli/`** — the `nib` command-line interface. Node-only.
 - **`src/tui/`** — terminal formatting helpers for the CLI.
 
-See [`ebb-only-plan.md`](./ebb-only-plan.md) for the full design history and open work.
-
 ---
 
 ## References
@@ -431,4 +496,4 @@ See [`ebb-only-plan.md`](./ebb-only-plan.md) for the full design history and ope
 
 ## License
 
-MIT.
+MIT © 2026 Jeff Heuer
