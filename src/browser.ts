@@ -30,10 +30,13 @@ export type {
   Stroke, Point, StrokeStats,
 } from './core/stroke.ts'
 export {
-  strokesToMoves, movesToStrokes, strokeStats,
+  strokesToMoves, movesToStrokes, strokeStats, deduplicateStrokes,
 } from './core/stroke.ts'
 
 export * as geom from './core/geom.ts'
+
+export { renderPreview, renderPreviewSvg } from './core/preview-render.ts'
+export type { PreviewRenderOptions, PreviewRenderStats } from './core/preview-render.ts'
 
 export { svgToMoves } from './backends/svg-to-moves.ts'
 export type { PlannerMove, MovePlanOptions } from './backends/svg-to-moves.ts'
@@ -57,6 +60,14 @@ export {
 export type { Envelope } from './core/envelope.ts'
 
 export type { Profile, ResolvedProfile, JobMetrics } from './core/job.ts'
+export { validateProfile } from './core/job.ts'
+
+export { hersheyStrokes, hersheyText, hersheyTextWidth } from './core/hershey.ts'
+
+export {
+  NibError, PortNotFoundError, EnvelopeViolationError,
+  DeviceDisconnectedError, ValidationError, ConfigError,
+} from './core/errors.ts'
 
 // ─── Protocol layer (transport-agnostic) ─────────────────────────────────────
 
@@ -217,6 +228,47 @@ export class LivePlotter {
   /** Wait for the queue to drain. */
   async ready(): Promise<void> {
     await this.queue
+  }
+
+  /**
+   * Current tracked arm position in mm. Software-tracked via submitted moves;
+   * resets to (0, 0) on `reenableMotors()` (manual home workflow).
+   */
+  get currentPosition(): { x: number; y: number } {
+    return this.backend.currentPosition
+  }
+
+  /** Park the arm at (0,0) without ending the session. Motors stay on. */
+  async home(): Promise<void> {
+    if (!this.started || this.closed) return
+    const run = this.queue.then(() => this.backend.home())
+    this.queue = run.catch(() => undefined)
+    await run
+  }
+
+  /**
+   * Disable motors so the arm can be repositioned by hand. Call
+   * reenableMotors() afterwards to resume — that position becomes the new
+   * origin (0,0) for future home() calls.
+   */
+  async releaseMotors(): Promise<void> {
+    if (!this.started || this.closed) return
+    await this.queue.catch(() => undefined)
+    await this.backend.releaseMotors()
+  }
+
+  /** Re-enable motors at the current physical position, setting it as origin. */
+  async reenableMotors(): Promise<void> {
+    if (!this.started || this.closed) return
+    await this.backend.reenableMotors()
+  }
+
+  /** Lift pen immediately (queued — waits for any in-flight stroke to finish). */
+  async liftPen(): Promise<void> {
+    if (!this.started || this.closed) return
+    const run = this.queue.then(() => this.backend.liftPen())
+    this.queue = run.catch(() => undefined)
+    await run
   }
 
   /** Home, pen up, disable motors. Leaves the transport open. */

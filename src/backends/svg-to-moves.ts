@@ -5,7 +5,8 @@
  * pen-down state. All coordinates are in millimetres relative to the SVG's
  * top-left origin.
  *
- * Supports: <path>, <line>, <rect>, <circle>, <ellipse>, <polyline>, <polygon>
+ * Supports: <path>, <line>, <rect>, <circle>, <ellipse>, <polyline>, <polygon>,
+ *           <text> (rendered with Hershey Simplex font), <use> (symbol/element refs)
  * Handles: nested groups with cumulative transforms, viewBox / width-height scaling
  */
 
@@ -13,6 +14,7 @@ import { parseSync as parseSvg } from 'svgson'
 import { SVGPathData, SVGPathDataTransformer } from 'svg-pathdata'
 import { parseLayerAttrs } from '../core/svg-layers.ts'
 import { parseDimMm } from '../core/svg-units.ts'
+import { HERSHEY_GLYPHS, HERSHEY_CAP_HEIGHT } from '../core/hershey.ts'
 // SVGCommand is not re-exported from the top-level — import from the sub-path
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type SVGPathDataCommand = any
@@ -50,9 +52,12 @@ export function svgToMoves(svgContent: string, options: MovePlanOptions = {}): P
   // offset through every helper.
   const initialCtm: Matrix = [1, 0, 0, 1, -vbX, -vbY]
 
+  // Build a map of id → node for <use> element resolution.
+  const defsMap = buildDefsMap(root)
+
   const moves: PlannerMove[] = [{ x: 0, y: 0, penDown: false }]
 
-  walkNode(root, initialCtm, INITIAL_STYLE, scale, tol, options.layer ?? null, moves)
+  walkNode(root, initialCtm, INITIAL_STYLE, scale, tol, options.layer ?? null, moves, defsMap)
 
   // Ensure we end pen-up
   if (moves.length > 0 && moves[moves.length - 1].penDown) {
@@ -60,6 +65,20 @@ export function svgToMoves(svgContent: string, options: MovePlanOptions = {}): P
   }
 
   return moves
+}
+
+// ─── Defs map ─────────────────────────────────────────────────────────────────
+
+function buildDefsMap(root: SvgNode): Map<string, SvgNode> {
+  const map = new Map<string, SvgNode>()
+  collectIds(root, map)
+  return map
+}
+
+function collectIds(node: SvgNode, map: Map<string, SvgNode>): void {
+  const id = node.attributes['id']
+  if (id) map.set(id, node)
+  for (const child of node.children ?? []) collectIds(child as SvgNode, map)
 }
 
 // ─── Coordinate scale resolution ─────────────────────────────────────────────
@@ -148,6 +167,8 @@ function transformFn(fn: string, a: number[]): Matrix {
 
 interface SvgNode {
   name: string
+  type?: string   // 'element' | 'text' (svgson text-content nodes have type='text')
+  value?: string  // text content for type='text' nodes
   attributes: Record<string, string>
   children?: SvgNode[]
 }
@@ -237,6 +258,7 @@ function walkNode(
   tol: number,        // flatness tolerance (mm)
   filterLayer: number | null,
   out: PlannerMove[],
+  defsMap: Map<string, SvgNode> = new Map(),
 ): void {
   // Accumulate transform
   const txAttr = node.attributes['transform']
@@ -289,10 +311,22 @@ function walkNode(
     appendPolylineMoves(node.attributes['points'] ?? '', false, m, scale, out)
   } else if (name === 'polygon') {
     appendPolylineMoves(node.attributes['points'] ?? '', true, m, scale, out)
+  } else if (name === 'text') {
+    appendTextMoves(node, m, scale, out)
+  } else if (name === 'use') {
+    const href = node.attributes['href'] ?? node.attributes['xlink:href'] ?? ''
+    const refId = href.startsWith('#') ? href.slice(1) : ''
+    const refNode = defsMap.get(refId)
+    if (refNode) {
+      const ux = parseFloat(node.attributes['x'] ?? '0')
+      const uy = parseFloat(node.attributes['y'] ?? '0')
+      const useTx: Matrix = [1, 0, 0, 1, ux, uy]
+      walkNode(refNode, multiplyMatrix(m, useTx), merged, scale, tol, filterLayer, out, defsMap)
+    }
   }
 
   for (const child of node.children ?? []) {
-    walkNode(child as SvgNode, m, merged, scale, tol, filterLayer, out)
+    walkNode(child as SvgNode, m, merged, scale, tol, filterLayer, out, defsMap)
   }
 }
 
@@ -504,6 +538,73 @@ function flattenCubic(
 
   flattenCubic(x0, y0, mx01, my01, mx012, my012, mid, midy, m, scale, tol, out, continuePath)
   flattenCubic(mid, midy, mx123, my123, mx23, my23, x3, y3, m, scale, tol, out, true)
+}
+
+// ─── Text → Hershey ──────────────────────────────────────────────────────────
+
+/**
+ * Render a `<text>` element using the Hershey Simplex font. Works in user-unit
+ * space so the CTM (transforms, viewBox scale) applies correctly to each glyph
+ * point — including rotated or scaled text containers.
+ *
+ * SVG `y` on a text element is the baseline; Hershey y=0 is the cap top.
+ * Adjustment: capTop = baseline − capHeight.
+ */
+function appendTextMoves(
+  node: SvgNode,
+  m: Matrix,
+  scale: number,
+  out: PlannerMove[],
+): void {
+  // Collect text content from immediate text children and <tspan> descendants.
+  let content = ''
+  for (const child of node.children ?? []) {
+    const c = child as SvgNode
+    if (c.type === 'text') {
+      content += c.value ?? ''
+    } else if (c.name === 'tspan') {
+      for (const tc of c.children ?? []) {
+        const t = tc as SvgNode
+        if (t.type === 'text') content += t.value ?? ''
+      }
+    }
+  }
+  content = content.trim()
+  if (!content) return
+
+  const attrs = node.attributes
+  const xUser = parseFloat(attrs['x'] ?? '0')
+  const yUser = parseFloat(attrs['y'] ?? '0')
+
+  // font-size: explicit units (12mm, 12px…) take priority, else treat as user units.
+  const fsRaw  = attrs['font-size'] ?? attrs['fontSize'] ?? '12'
+  const fsMmExplicit = parseDimMm(fsRaw)
+  const fsUserUnits  = fsMmExplicit !== null
+    ? fsMmExplicit / scale
+    : (parseFloat(fsRaw) || 12)
+
+  const fontScale = fsUserUnits / HERSHEY_CAP_HEIGHT
+  // SVG y is the baseline; Hershey origin is the cap-top.
+  const capTopY = yUser - HERSHEY_CAP_HEIGHT * fontScale
+
+  let cursorX = xUser
+  for (const char of content) {
+    const code = char.codePointAt(0) ?? 63
+    const glyph = HERSHEY_GLYPHS[code] ?? HERSHEY_GLYPHS[63]!
+    const glyphX = cursorX - glyph.left * fontScale
+
+    for (const stroke of glyph.strokes) {
+      if (stroke.length < 2) continue
+      const [p0x, p0y] = transformPoint(glyphX + stroke[0][0] * fontScale, capTopY + stroke[0][1] * fontScale, m, scale)
+      penUp(p0x, p0y, out)
+      for (let i = 1; i < stroke.length; i++) {
+        const [px, py] = transformPoint(glyphX + stroke[i][0] * fontScale, capTopY + stroke[i][1] * fontScale, m, scale)
+        penDown(px, py, out)
+      }
+    }
+
+    cursorX += (glyph.right - glyph.left) * fontScale
+  }
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────

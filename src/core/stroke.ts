@@ -161,6 +161,43 @@ export function simplifyMoves(moves: PlannerMove[], toleranceMm: number): Planne
 }
 
 /**
+ * Remove duplicate strokes from a list. Two strokes are considered duplicates
+ * if every corresponding point pair is within `toleranceMm` (default 0.1 mm)
+ * of each other, in either forward or reverse order.
+ *
+ * Runs in O(n²) which is acceptable for typical plot sizes (< 10k strokes).
+ */
+export function deduplicateStrokes(strokes: Stroke[], toleranceMm = 0.1): Stroke[] {
+  const tol2 = toleranceMm * toleranceMm
+  const kept: Stroke[] = []
+
+  outer: for (const s of strokes) {
+    if (s.skip || s.points.length < 2) {
+      kept.push(s)
+      continue
+    }
+    for (const k of kept) {
+      if (k.skip || k.points.length !== s.points.length) continue
+      if (strokesMatch(s.points, k.points, tol2) || strokesMatch(s.points, [...k.points].reverse(), tol2)) {
+        continue outer
+      }
+    }
+    kept.push(s)
+  }
+
+  return kept
+}
+
+function strokesMatch(a: Point[], b: Point[], tol2: number): boolean {
+  for (let i = 0; i < a.length; i++) {
+    const dx = a[i].x - b[i].x
+    const dy = a[i].y - b[i].y
+    if (dx * dx + dy * dy > tol2) return false
+  }
+  return true
+}
+
+/**
  * Cheap structural stats — stroke count, total pen-down distance, bounding box.
  * Useful for UI previews without running the planner.
  */

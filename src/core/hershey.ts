@@ -6,7 +6,8 @@
  *   - Cap height = 21 units (y = 0 at top, y = 21 at baseline — note: y-axis DOWN here)
  *   - Each character has a left and right margin defining its advance width
  *
- * renderText() converts a string to SVG path data at a given mm size.
+ * hersheyText() converts a string to an SVG path `d` attribute.
+ * hersheyStrokes() converts directly to Stroke[] for the code-first plotter API.
  * Caller places the result at (x, y) where y is the TOP of the text.
  */
 
@@ -524,6 +525,9 @@ const GLYPHS: Record<number, Glyph> = {
 
 const HERSHEY_CAP_HEIGHT = 21  // units from top to baseline
 
+/** @internal — glyph table for CTM-correct text in the SVG parser */
+export { GLYPHS as HERSHEY_GLYPHS, HERSHEY_CAP_HEIGHT }
+
 /**
  * Render a text string as SVG path data.
  *
@@ -577,3 +581,41 @@ export function hersheyTextWidth(text: string, fontSize: number): number {
 
 // Format a number for SVG path (2 decimal places, no trailing zeros)
 function f(n: number): string { return parseFloat(n.toFixed(2)).toString() }
+
+// ─── Code-first API ───────────────────────────────────────────────────────────
+
+import type { Stroke, Point } from './stroke.ts'
+
+/**
+ * Convert a text string directly to `Stroke[]` for the nib code-first API.
+ * No SVG round-trip — each glyph stroke becomes one `Stroke`.
+ *
+ * @param text      The text to render
+ * @param x         Left edge X in mm
+ * @param y         Top of text Y in mm (NOT baseline)
+ * @param fontSize  Height of capital letters in mm
+ */
+export function hersheyStrokes(text: string, x: number, y: number, fontSize: number): Stroke[] {
+  const scale = fontSize / HERSHEY_CAP_HEIGHT
+  const out: Stroke[] = []
+  let cursorX = x
+
+  for (const char of text) {
+    const code = char.codePointAt(0) ?? 63
+    const glyph = GLYPHS[code] ?? GLYPHS[63]!
+    const glyphX = cursorX - glyph.left * scale
+
+    for (const stroke of glyph.strokes) {
+      if (stroke.length < 2) continue
+      const points: Point[] = stroke.map(([px, py]) => ({
+        x: glyphX + px * scale,
+        y: y + py * scale,
+      }))
+      out.push({ points })
+    }
+
+    cursorX += (glyph.right - glyph.left) * scale
+  }
+
+  return out
+}

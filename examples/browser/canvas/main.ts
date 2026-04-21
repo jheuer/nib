@@ -30,6 +30,8 @@ const paperEl = document.getElementById('paper') as HTMLSelectElement
 const connectBtn = document.getElementById('connect') as HTMLButtonElement
 const clearBtn   = document.getElementById('clear')   as HTMLButtonElement
 const homeBtn    = document.getElementById('home')    as HTMLButtonElement
+const releaseBtn = document.getElementById('release') as HTMLButtonElement
+const liftBtn    = document.getElementById('lift')    as HTMLButtonElement
 const closeBtn   = document.getElementById('close')   as HTMLButtonElement
 const statusEl   = document.getElementById('status')  as HTMLDivElement
 const legendEl   = document.getElementById('legend')  as HTMLDivElement
@@ -89,60 +91,122 @@ function layoutCanvas() {
 function drawPaper() {
   ctx.save()
   ctx.setTransform(window.devicePixelRatio || 1, 0, 0, window.devicePixelRatio || 1, 0, 0)
-  ctx.fillStyle = '#fdfcf7'
+  ctx.fillStyle = '#f5f0e8'
   ctx.fillRect(0, 0, canvas.width, canvas.height)
   ctx.restore()
 
   const sel = PAPER_MM[paper]
+  const envW = sel.w
+  const envH = sel.h
 
-  // Schematic: black gantry rail below the page, silver traverse arm at X=0.
+  const railBlack    = '#1c1c1c'
+  const armSilver    = '#d5d8dc'
+  const armEdge      = '#8a8e94'
+  const labelInk     = '#666'
+  const gantryRailH  = 14
+  const traverseArmW = 10
+  const homeBlockW   = 18
+  const homeBlockH   = gantryRailH + 6
+  const farBlockW    = 6
+  const railBottom   = -8
+  const railTop      = railBottom - gantryRailH
+
+  // ── Gantry rail (above the page, negative Y) ─────────────────────────────
   ctx.save()
-  ctx.fillStyle = '#1c1c1c'
-  ctx.fillRect(-18, sel.h + 8, sel.w + 24, 14)
-  ctx.fillStyle = '#fff'
-  ctx.font = `2.8px system-ui`
+
+  ctx.fillStyle = railBlack
+  ctx.fillRect(-2, railTop, envW + farBlockW + 2, gantryRailH)
+
+  ctx.strokeStyle = armSilver
+  ctx.lineWidth = 0.3
+  ctx.setLineDash([1.4, 1])
+  ctx.beginPath()
+  ctx.moveTo(0, railTop + gantryRailH / 2)
+  ctx.lineTo(envW + farBlockW, railTop + gantryRailH / 2)
+  ctx.stroke()
+  ctx.setLineDash([])
+
+  ctx.fillStyle = railBlack
+  ctx.fillRect(-homeBlockW, railTop - 3, homeBlockW, homeBlockH)
+  ctx.fillStyle = 'white'
+  ctx.font = `600 2.8px system-ui`
   ctx.textAlign = 'center'
   ctx.textBaseline = 'middle'
-  ctx.fillText('Home', -9, sel.h + 15)
-  // Silver arm at X=0
-  ctx.fillStyle = '#d5d8dc'
-  ctx.strokeStyle = '#8a8e94'
+  ctx.fillText('Home', -homeBlockW / 2, railTop + gantryRailH / 2 + 1)
+
+  ctx.fillStyle = railBlack
+  ctx.fillRect(envW + 2, railTop - 1, farBlockW, gantryRailH + 2)
+
+  ctx.fillStyle = armSilver
+  ctx.strokeStyle = armEdge
   ctx.lineWidth = 0.2
-  ctx.fillRect(-5, -4, 10, sel.h + 4 + (22))
-  ctx.strokeRect(-5, -4, 10, sel.h + 4 + (22))
-  // Pen carriage at (0,0)
-  ctx.fillStyle = '#8a8e94'
-  ctx.fillRect(-6, -3, 12, 6)
+  ctx.fillRect(-traverseArmW / 2, railBottom, traverseArmW, envH + 4 - railBottom)
+  ctx.strokeRect(-traverseArmW / 2, railBottom, traverseArmW, envH + 4 - railBottom)
+
+  ctx.fillStyle = armEdge
+  ctx.fillRect(-traverseArmW / 2 - 2, railTop - 1, traverseArmW + 4, gantryRailH + 2)
+
+  ctx.fillStyle = armEdge
+  ctx.fillRect(-traverseArmW / 2 - 1, -3, traverseArmW + 2, 6)
+
   ctx.restore()
 
-  // Paper rect with a thin border
+  // ── Paper rect ────────────────────────────────────────────────────────────
   ctx.save()
   ctx.fillStyle = '#fdfcf7'
   ctx.strokeStyle = '#bbb'
   ctx.lineWidth = 0.2
-  ctx.fillRect(0, 0, sel.w, sel.h)
-  ctx.strokeRect(0, 0, sel.w, sel.h)
+  ctx.fillRect(0, 0, envW, envH)
+  ctx.strokeRect(0, 0, envW, envH)
   ctx.restore()
 
-  // Home cross in the corner
+  // ── Home crosshair at (0,0) ───────────────────────────────────────────────
   ctx.save()
   ctx.strokeStyle = '#d33'
-  ctx.lineWidth = 0.3
+  ctx.lineWidth = 0.25
   ctx.beginPath()
-  ctx.moveTo(-3, 0); ctx.lineTo(3, 0)
-  ctx.moveTo(0, -3); ctx.lineTo(0, 3)
+  ctx.arc(0, 0, 1.2, 0, Math.PI * 2)
   ctx.stroke()
   ctx.beginPath()
-  ctx.arc(0, 0, 1.5, 0, Math.PI * 2)
+  ctx.moveTo(-2.4, 0); ctx.lineTo(2.4, 0)
+  ctx.moveTo(0, -2.4); ctx.lineTo(0, 2.4)
   ctx.stroke()
   ctx.restore()
 
-  // Labels
+  // ── Direction arrows + labels ─────────────────────────────────────────────
   ctx.save()
-  ctx.fillStyle = '#888'
+  ctx.strokeStyle = labelInk
+  ctx.fillStyle = labelInk
+  ctx.lineWidth = 0.4
+
+  ctx.beginPath()
+  ctx.moveTo(envW / 2 - 18, envH + 8); ctx.lineTo(envW / 2 + 18, envH + 8)
+  ctx.moveTo(envW / 2 + 18, envH + 8); ctx.lineTo(envW / 2 + 14, envH + 8 - 1.8)
+  ctx.moveTo(envW / 2 + 18, envH + 8); ctx.lineTo(envW / 2 + 14, envH + 8 + 1.8)
+  ctx.stroke()
+
+  ctx.save()
+  ctx.translate(envW + 12, envH / 2)
+  ctx.rotate(Math.PI / 2)
+  ctx.beginPath()
+  ctx.moveTo(-18, 0); ctx.lineTo(18, 0)
+  ctx.moveTo(18, 0); ctx.lineTo(14, -1.8)
+  ctx.moveTo(18, 0); ctx.lineTo(14, 1.8)
+  ctx.stroke()
+  ctx.restore()
+
   ctx.font = `3px system-ui`
   ctx.textAlign = 'center'
-  ctx.fillText('+X · traverse along gantry rail', sel.w / 2, sel.h + 30)
+  ctx.textBaseline = 'alphabetic'
+  ctx.fillText('+X  ·  traverse along gantry rail', envW / 2, envH + 12.5)
+
+  ctx.save()
+  ctx.translate(envW + 16, envH / 2)
+  ctx.rotate(Math.PI / 2)
+  ctx.textAlign = 'center'
+  ctx.fillText('+Y  ·  pen along traverse arm', 0, 0)
+  ctx.restore()
+
   ctx.restore()
 }
 
@@ -252,10 +316,12 @@ connectBtn.addEventListener('click', async () => {
     plotter = new LivePlotter(transport, { profile, envelope })
     await plotter.start()
     setStatus('idle', 'ok')
-    connectBtn.disabled = true
-    clearBtn.disabled = false
-    homeBtn.disabled  = false
-    closeBtn.disabled = false
+    connectBtn.disabled  = true
+    clearBtn.disabled    = false
+    homeBtn.disabled     = false
+    releaseBtn.disabled  = false
+    liftBtn.disabled     = false
+    closeBtn.disabled    = false
     legendEl.textContent = `pen ${profile.nibSizeMm}mm · ${profile.color} · profile "${profile.name}"`
   } catch (err) {
     console.error(err)
@@ -271,19 +337,54 @@ clearBtn.addEventListener('click', () => {
 homeBtn.addEventListener('click', async () => {
   if (!plotter) return
   setStatus('homing…', 'busy')
-  // LivePlotter doesn't expose a bare home call; ending the session homes the
-  // arm and disables motors. For a live workflow that's acceptable — user can
-  // reconnect if they want to keep drawing.
   try {
-    await plotter.end()
-    plotter = null
-    setStatus('homed · disconnect to end', 'ok')
-    connectBtn.disabled = false
-    homeBtn.disabled = true
-    closeBtn.disabled = true
+    await plotter.home()
+    setStatus('idle', 'ok')
   } catch (err) {
     console.error(err)
     setStatus('home failed', 'error')
+  }
+})
+
+releaseBtn.addEventListener('click', async () => {
+  if (!plotter) return
+  if (releaseBtn.textContent === 'Set Home') {
+    // Re-enable motors at current physical position — this becomes the new origin.
+    setStatus('setting home…', 'busy')
+    try {
+      await plotter.reenableMotors()
+      releaseBtn.textContent = 'Release Motors'
+      homeBtn.disabled = false
+      liftBtn.disabled = false
+      setStatus('idle', 'ok')
+    } catch (err) {
+      console.error(err)
+      setStatus('rearm failed', 'error')
+    }
+  } else {
+    // Disable motors so user can park the arm by hand, then click Set Home.
+    setStatus('motors released — move arm to home corner, then Set Home', 'busy')
+    try {
+      await plotter.releaseMotors()
+      releaseBtn.textContent = 'Set Home'
+      homeBtn.disabled = true
+      liftBtn.disabled = true
+    } catch (err) {
+      console.error(err)
+      setStatus('release failed', 'error')
+    }
+  }
+})
+
+liftBtn.addEventListener('click', async () => {
+  if (!plotter) return
+  setStatus('lifting pen…', 'busy')
+  try {
+    await plotter.liftPen()
+    setStatus('idle', 'ok')
+  } catch (err) {
+    console.error(err)
+    setStatus('lift failed', 'error')
   }
 })
 
@@ -294,10 +395,13 @@ closeBtn.addEventListener('click', async () => {
     await plotter.close()
     plotter = null
     setStatus('disconnected', '')
-    connectBtn.disabled = false
-    clearBtn.disabled   = true
-    homeBtn.disabled    = true
-    closeBtn.disabled   = true
+    connectBtn.disabled  = false
+    clearBtn.disabled    = true
+    homeBtn.disabled     = true
+    releaseBtn.disabled  = true
+    releaseBtn.textContent = 'Release Motors'
+    liftBtn.disabled     = true
+    closeBtn.disabled    = true
   } catch (err) {
     console.error(err)
     setStatus('close failed', 'error')

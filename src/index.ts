@@ -13,7 +13,7 @@ export type {
   BackendName,
 } from './core/job.ts'
 
-export { createJob } from './core/job.ts'
+export { createJob, validateProfile } from './core/job.ts'
 
 export type { GlobalConfig, ProjectConfig, PenWear } from './core/config.ts'
 export {
@@ -65,7 +65,7 @@ export type { PlannerMove, MovePlanOptions } from './backends/svg-to-moves.ts'
 export { applyPreprocessSteps, parsePaperSize } from './core/preprocess.ts'
 export { fireCompleteHook, fireLayerCompleteHook, fireAbortHook } from './core/hooks.ts'
 
-export { hersheyText, hersheyTextWidth } from './core/hershey.ts'
+export { hersheyText, hersheyTextWidth, hersheyStrokes } from './core/hershey.ts'
 export { appendPlotCard, buildPlotCardVars, DEFAULT_PLOT_CARD } from './core/plot-card.ts'
 export type { PlotCardConfig, PlotCardField, PlotCardVars } from './core/plot-card.ts'
 
@@ -80,11 +80,19 @@ export type { ArmState } from './core/state.ts'
 // ─── Code-first stroke API ────────────────────────────────────────────────────
 
 export {
-  strokesToMoves, movesToStrokes, strokeStats,
+  strokesToMoves, movesToStrokes, strokeStats, deduplicateStrokes,
 } from './core/stroke.ts'
 export type { Stroke, Point, StrokeStats } from './core/stroke.ts'
 
 export * as geom from './core/geom.ts'
+
+export { renderPreview, renderPreviewSvg } from './core/preview-render.ts'
+export type { PreviewRenderOptions, PreviewRenderStats } from './core/preview-render.ts'
+
+export {
+  NibError, PortNotFoundError, EnvelopeViolationError,
+  DeviceDisconnectedError, ValidationError, ConfigError,
+} from './core/errors.ts'
 
 // ─── High-level plot() API ────────────────────────────────────────────────────
 

@@ -26,6 +26,12 @@ import { reorder, type OptimizeLevel } from '../core/reorder.ts'
 import { planMove, planStroke, optionsForProfile } from '../core/planner.ts'
 import { isInEnvelope, type Envelope } from '../core/envelope.ts'
 
+// Safe stderr write — process.stderr is unavailable in browser bundles.
+const stderrWrite = (msg: string) =>
+  typeof process !== 'undefined' && typeof process.stderr?.write === 'function'
+    ? process.stderr.write(msg)
+    : undefined
+
 // ─── EBBBackend ───────────────────────────────────────────────────────────────
 
 export class EBBBackend implements PlotBackend {
@@ -34,6 +40,7 @@ export class EBBBackend implements PlotBackend {
   private currentY = 0
   private penIsDown = false
   private useLm = false
+  private penReadyForFirstStroke = false
   /** Firmware capability flags, populated by `connect()`. Defaults to "nothing
    *  available" so methods that call into guarded features fail cleanly if
    *  they're (incorrectly) called before connect. */
@@ -100,10 +107,10 @@ export class EBBBackend implements PlotBackend {
       this.penIsDown = false
     }
 
-    process.stderr.write(`  [home] returning (${this.currentX.toFixed(1)}, ${this.currentY.toFixed(1)}) → (0, 0)\n`)
+    stderrWrite(`  [home] returning (${this.currentX.toFixed(1)}, ${this.currentY.toFixed(1)}) → (0, 0)\n`)
 
     if (Math.abs(this.currentX) < 0.001 && Math.abs(this.currentY) < 0.001) {
-      process.stderr.write(`  [home] already at origin\n`)
+      stderrWrite(`  [home] already at origin\n`)
       return
     }
 
@@ -237,7 +244,7 @@ export class EBBBackend implements PlotBackend {
       await this.home().catch(() => undefined)
     }
     const fraction = (copy + moveIdx / totalMoves) / copies
-    process.stderr.write(`\n  ${reason}\n`)
+    stderrWrite(`\n  ${reason}\n`)
     emitter.emit('abort', fraction)
   }
 
@@ -269,10 +276,13 @@ export class EBBBackend implements PlotBackend {
    * skip re-configuring per stroke.
    */
   async configureSession(profile: ResolvedProfile): Promise<void> {
+    // SC only — no SP/S2 commands. The servo does not move during connect.
+    // The first plotLiveStroke call will issue penUp before any travel,
+    // guaranteeing the pen is physically up before the arm moves.
     await this.ebb.configureServo(profile.penPosUp, profile.penPosDown)
     await this.ebb.setServoTimeout(profile.servoIdleMs ?? 60_000)
-    await this.ebb.penUp()
     this.penIsDown = false
+    this.penReadyForFirstStroke = false
   }
 
   /**
@@ -287,6 +297,15 @@ export class EBBBackend implements PlotBackend {
     signal?: AbortSignal,
   ): Promise<void> {
     if (points.length < 2) return
+
+    // First stroke of the session: physically lift the pen before any travel.
+    // configureSession deliberately skips SP commands so connect is silent;
+    // we do it here instead, right before the arm first needs to move.
+    if (!this.penReadyForFirstStroke) {
+      this.penReadyForFirstStroke = true
+      await this.ebb.penUp()
+      this.penIsDown = false
+    }
 
     // Pen-up travel to the stroke's start point.
     const start = points[0]
@@ -337,6 +356,38 @@ export class EBBBackend implements PlotBackend {
       const { moving } = await this.ebb.queryMotors()
       if (!moving) return
       await sleep(20)
+    }
+  }
+
+  /**
+   * Current tracked arm position in mm from origin (software-tracked via moves).
+   * Resets to (0, 0) when motors are re-enabled via reenableMotors().
+   */
+  get currentPosition(): { x: number; y: number } {
+    return { x: this.currentX, y: this.currentY }
+  }
+
+  /** Disable both stepper motors so the user can reposition the arm by hand. */
+  async releaseMotors(): Promise<void> {
+    await this.ebb.disableMotors()
+  }
+
+  /**
+   * Re-enable motors at the current physical position, treating it as the new
+   * origin. Resets currentX/Y to 0 so subsequent home() returns here.
+   */
+  async reenableMotors(): Promise<void> {
+    await this.ebb.enableMotors(1, 1)
+    this.currentX = 0
+    this.currentY = 0
+    this.penReadyForFirstStroke = false
+  }
+
+  /** Lift pen if it is currently down. No-op if already up. */
+  async liftPen(): Promise<void> {
+    if (this.penIsDown) {
+      await this.ebb.penUpFast()
+      this.penIsDown = false
     }
   }
 

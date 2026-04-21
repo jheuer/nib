@@ -4,34 +4,48 @@
   <meta charset="UTF-8" />
   <title>nib + p5.js · flow field</title>
   <style>
+    :root { --ink: #111; --accent: #d33; --muted: #888; }
     * { box-sizing: border-box; }
     body {
       margin: 0; min-height: 100vh; background: #ede8dd;
-      font: 14px/1.4 system-ui, -apple-system, sans-serif; color: #111;
+      font: 14px/1.4 system-ui, -apple-system, sans-serif; color: var(--ink);
       display: flex; flex-direction: column; align-items: center; padding: 1.5rem;
     }
     h1 { font-size: 1rem; font-weight: 600; margin: 0 0 1rem; }
-    h1 .dim { color: #888; font-weight: 400; }
+    h1 .dim { color: var(--muted); font-weight: 400; }
     .controls { display: flex; gap: 0.5rem; align-items: center; margin-bottom: 1rem; flex-wrap: wrap; }
     button {
-      background: white; border: 1px solid #ccc; color: #111;
+      background: white; border: 1px solid #ccc; color: var(--ink);
       padding: 0.4rem 0.9rem; font: inherit; cursor: pointer; border-radius: 3px;
     }
-    button:hover:not(:disabled) { border-color: #111; }
+    button:hover:not(:disabled) { border-color: var(--ink); }
     button:disabled { opacity: 0.4; cursor: not-allowed; }
-    button.primary { background: #111; color: white; border-color: #111; }
+    button.primary { background: var(--ink); color: white; border-color: var(--ink); }
+    button.danger  { color: var(--accent); border-color: var(--accent); }
+    select { padding: 0.35rem 0.5rem; font: inherit; }
     .status {
-      font: 12px ui-monospace, monospace; color: #888;
+      font: 12px ui-monospace, monospace; color: var(--muted);
       margin-left: auto; min-width: 18ch; text-align: right;
     }
     .status.ok    { color: #178e4a; }
     .status.busy  { color: #c58000; }
-    .status.error { color: #d33; }
+    .status.error { color: var(--accent); }
     #sketch {
       background: white; box-shadow: 0 4px 14px rgba(0,0,0,0.08);
       border: 1px solid #d0cabd; line-height: 0;
     }
-    .hint { color: #888; font-size: 12px; margin-top: 0.75rem; }
+    .preview-header {
+      display: flex; align-items: center; gap: 1rem;
+      margin-top: 1.25rem; margin-bottom: 0.4rem;
+      font-size: 12px; color: var(--muted);
+    }
+    .travel-toggle { display: flex; align-items: center; gap: 0.3rem; cursor: pointer; }
+    .preview-stats { margin-left: auto; font: 11px ui-monospace, monospace; }
+    #preview-canvas {
+      display: block;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.06); border: 1px solid #d0cabd;
+    }
+    .hint { color: var(--muted); font-size: 12px; margin-top: 0.75rem; }
     code { background: #f1ecdf; padding: 1px 4px; border-radius: 2px; }
   </style>
 </head>
@@ -41,12 +55,36 @@
   <div class="controls">
     <button id="regen">Regenerate</button>
     <button id="connect" class="primary">Connect AxiDraw</button>
-    <button id="plot" disabled>Plot</button>
-    <button id="home" disabled>Home</button>
+    <button id="plot"    disabled>Plot</button>
+    <button id="home"    disabled>Home</button>
+    <button id="release" disabled>Release Motors</button>
+    <button id="lift"    class="danger" disabled>Lift Pen</button>
+    <button id="close"   class="danger" disabled>Disconnect</button>
+
+    <label style="margin-left: 0.5rem;">
+      paper
+      <select id="paper">
+        <option value="A4-p">A4 portrait (210×297)</option>
+        <option value="A4-l" selected>A4 landscape (297×210)</option>
+        <option value="A3-p">A3 portrait (297×420)</option>
+        <option value="A3-l">A3 landscape (420×297)</option>
+      </select>
+    </label>
+
     <div id="status" class="status">not connected</div>
   </div>
 
   <div id="sketch"></div>
+
+  <div class="preview-header">
+    <span class="dim">plotter preview</span>
+    <label class="travel-toggle">
+      <input type="checkbox" id="show-travel" checked>
+      show travel
+    </label>
+    <span id="preview-stats" class="preview-stats"></span>
+  </div>
+  <canvas id="preview-canvas"></canvas>
 
   <p class="hint">
     Built with instance-mode p5.js. The sketch draws with <code>beginShape()</code>/<code>vertex()</code>;

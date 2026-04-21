@@ -1,6 +1,15 @@
 {
   "name": "nib",
-  "version": "0.1.0",
+  "version": "0.2.0",
+  "description": "TypeScript library and CLI for driving AxiDraw plotters via native EBB protocol",
+  "license": "MIT",
+  "author": "Jeff Heuer",
+  "homepage": "https://github.com/jheuer/nib",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/jheuer/nib.git"
+  },
+  "keywords": ["axidraw", "ebb", "plotter", "generative-art", "svg", "drawing"],
   "type": "module",
   "bin": {
     "nib": "./dist/nib"
@@ -25,6 +34,7 @@
     "build": "bun run build:cli && bun run build:lib && bun run build:browser",
     "test": "bun test",
     "typecheck": "bunx tsc --noEmit",
+    "typecheck:examples": "bunx tsc --noEmit -p tsconfig.examples.json",
     "example:canvas": "bun examples/browser/canvas/serve.ts",
     "example:p5":     "bun examples/browser/p5/serve.ts"
   },

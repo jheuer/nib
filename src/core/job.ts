@@ -108,6 +108,38 @@ export interface Job {
   session?: number        // multi-session counter (increments per plot --session)
 }
 
+// ─── Profile validation ───────────────────────────────────────────────────────
+
+/**
+ * Validate a Profile for in-range values and internal consistency.
+ * Returns an array of human-readable error strings (empty = valid).
+ */
+export function validateProfile(p: Profile): string[] {
+  const errors: string[] = []
+
+  function inRange(field: string, val: number | undefined, min: number, max: number) {
+    if (val === undefined) return
+    if (val < min || val > max) errors.push(`${field} must be ${min}–${max}, got ${val}`)
+  }
+
+  inRange('speedPendown', p.speedPendown, 1, 100)
+  inRange('speedPenup',   p.speedPenup,   1, 100)
+  inRange('penPosDown',   p.penPosDown,   0, 100)
+  inRange('penPosUp',     p.penPosUp,     0, 100)
+  inRange('accel',        p.accel,        1, 100)
+
+  if (p.penPosUp !== undefined && p.penPosDown !== undefined && p.penPosUp <= p.penPosDown) {
+    errors.push(`penPosUp (${p.penPosUp}) must be greater than penPosDown (${p.penPosDown})`)
+  }
+
+  if (p.speedCapMms  !== undefined && p.speedCapMms  <= 0) errors.push('speedCapMms must be > 0')
+  if (p.speedCapUpMms !== undefined && p.speedCapUpMms <= 0) errors.push('speedCapUpMms must be > 0')
+  if (p.accelCapMms2  !== undefined && p.accelCapMms2  <= 0) errors.push('accelCapMms2 must be > 0')
+  if (p.nibSizeMm     !== undefined && p.nibSizeMm     <= 0) errors.push('nibSizeMm must be > 0')
+
+  return errors
+}
+
 // ─── Job builder ─────────────────────────────────────────────────────────────
 
 export function createJob(overrides: Partial<Job> & Pick<Job, 'svg' | 'profile'>): Job {
