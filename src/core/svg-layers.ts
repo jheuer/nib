@@ -30,6 +30,8 @@ export interface SvgLayer {
   rawLabel: string
   /** True when label starts with `!` — don't plot this layer. */
   skip: boolean
+  /** SVG `id` attribute of the layer <g> element, for CSS targeting. */
+  svgId?: string
 }
 
 /**
@@ -87,7 +89,7 @@ export function parseLayerAttrs(attrs: Record<string, string>): SvgLayer | null 
     name = work
   }
 
-  return { id, name, rawLabel, skip }
+  return { id, name, rawLabel, skip, svgId: attrs['id'] || undefined }
 }
 
 // ─── Tree walk ────────────────────────────────────────────────────────────────

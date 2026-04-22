@@ -426,6 +426,18 @@ export const plotCmd = defineCommand({
       }
     }
 
+    // ── Multi-layer hint (non-guided, no --layer filter) ─────────────────────
+    if (!isGuided && args.layer === undefined) {
+      const visibleLayers = parseSvgLayers(processedSvg).filter(l => !l.skip)
+      if (visibleLayers.length > 1) {
+        process.stderr.write(
+          chalk.yellow(`  ⚠  ${visibleLayers.length} layers detected.`) +
+          chalk.dim(' All will plot without pausing.\n') +
+          chalk.dim('     Use --guided for pen-swap prompts, or --layer N to plot one layer at a time.\n\n'),
+        )
+      }
+    }
+
     // ── Standard single-pass plot ─────────────────────────────────────────────
     const emitter = new PlotEmitter()
     attachProgressBar(emitter)

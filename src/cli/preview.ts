@@ -317,16 +317,52 @@ interface PreviewOpts {
  * corner marker — so the user can see fit, orientation, and home placement
  * before committing to paper.
  */
+// Distinct, plotter-legible colors for multi-layer previews.
+const LAYER_PALETTE = [
+  '#1a6fb5', // blue
+  '#c0392b', // red
+  '#27ae60', // green
+  '#8e44ad', // purple
+  '#d35400', // orange
+  '#16a085', // teal
+  '#c0a020', // gold
+  '#2c3e50', // dark navy
+]
+
 async function openBrowserPreview(
   svg: string, name: string, opts: PreviewOpts,
 ): Promise<void> {
-  // Path styling: profile-supplied ink colour + realistic nib width. Applied
-  // via CSS to every geometry element inside the user's SVG. Default ink is
-  // black (matches the plotter output when no profile colour is configured).
-  const ink = opts.color ?? '#000'
-  const pathStyle = opts.nibSizeMm
-    ? `stroke:${ink}; stroke-width:${opts.nibSizeMm}mm; stroke-linecap:round; stroke-linejoin:round; fill:none`
-    : `stroke:${ink}; stroke-linecap:round; stroke-linejoin:round; fill:none`
+  // Detect Inkscape layers so we can color them distinctly.
+  const allLayers = parseSvgLayers(svg).filter(l => !l.skip && l.svgId)
+  const multiLayer = allLayers.length > 1
+
+  // Build per-layer CSS when multiple layers are present; otherwise fall back
+  // to the profile's ink color applied globally.
+  const geomSel = (prefix: string) =>
+    ['path','polyline','line','polygon','circle','ellipse','rect']
+      .map(t => `${prefix} ${t}`)
+      .join(', ')
+
+  let pathStyleBlock: string
+  let layerLegendItems: Array<{ color: string; label: string }> = []
+
+  if (multiLayer) {
+    pathStyleBlock = allLayers.map((layer, i) => {
+      const color = LAYER_PALETTE[i % LAYER_PALETTE.length]!
+      const sw = opts.nibSizeMm ? `stroke-width:${opts.nibSizeMm}mm; ` : ''
+      layerLegendItems.push({ color, label: layer.name || `Layer ${layer.id}` })
+      return `${geomSel(`.user-content #${layer.svgId}`)} { stroke:${color}; ${sw}stroke-linecap:round; stroke-linejoin:round; fill:none; }`
+    }).join('\n    ')
+    // Fallback for any unlayered content
+    const fallback = opts.nibSizeMm
+      ? `stroke:#999; stroke-width:${opts.nibSizeMm}mm; stroke-linecap:round; stroke-linejoin:round; fill:none`
+      : `stroke:#999; stroke-linecap:round; stroke-linejoin:round; fill:none`
+    pathStyleBlock = `${geomSel('.user-content')} { ${fallback}; }\n    ${pathStyleBlock}`
+  } else {
+    const ink = opts.color ?? '#000'
+    const sw = opts.nibSizeMm ? `stroke-width:${opts.nibSizeMm}mm; ` : ''
+    pathStyleBlock = `${geomSel('.user-content')} { stroke:${ink}; ${sw}stroke-linecap:round; stroke-linejoin:round; fill:none; }`
+  }
 
   // The inner <svg> needs explicit width/height in mm so nested viewport
   // resolution lines up with the envelope (outer) viewBox, which is in mm.
@@ -476,13 +512,11 @@ async function openBrowserPreview(
   <style>
     body { background: #f5f0e8; display: flex; align-items: center; justify-content: center; min-height: 100vh; margin: 0; font-family: system-ui, sans-serif; }
     svg { border: 1px solid #ccc; background: white; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
-    /* Scope path styling to the nested user content only — the envelope rect
-       and schematic live in the outer SVG and must keep their own fills. */
-    .user-content path, .user-content polyline, .user-content line,
-    .user-content polygon, .user-content circle, .user-content ellipse,
-    .user-content rect { ${pathStyle}; }
-    .legend { position: fixed; bottom: 1rem; right: 1rem; font-family: ui-monospace, monospace; font-size: 12px; color: #666; text-align: right; line-height: 1.4; }
-    .legend .title { color: #333; }
+    /* Stroke styling scoped to user content — envelope/schematic keep their own fills. */
+    ${pathStyleBlock}
+    .legend { position: fixed; bottom: 1rem; right: 1rem; font-family: ui-monospace, monospace; font-size: 12px; color: #666; text-align: right; line-height: 1.6; }
+    .legend .title { color: #333; font-weight: 600; }
+    .layer-swatch { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 4px; vertical-align: middle; }
   </style>
 </head>
 <body>
@@ -490,8 +524,11 @@ async function openBrowserPreview(
   <div class="legend">
     <div class="title">nib preview — ${name}</div>
     <div>${legend}</div>
-    ${opts.nibSizeMm ? `<div>${opts.nibSizeMm}mm nib${opts.color ? ` · ${opts.color}` : ''}</div>` : ''}
+    ${opts.nibSizeMm ? `<div>${opts.nibSizeMm}mm nib${!multiLayer && opts.color ? ` · ${opts.color}` : ''}</div>` : ''}
     ${opts.rotateDeg ? `<div>rotated ${opts.rotateDeg}°</div>` : ''}
+    ${layerLegendItems.map(({ color, label }) =>
+      `<div><span class="layer-swatch" style="background:${color}"></span>${label}</div>`
+    ).join('\n    ')}
   </div>
 </body>
 </html>`
