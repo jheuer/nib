@@ -131,6 +131,7 @@ export class EBBBackend implements PlotBackend {
   private async lmSingleMove(
     dXmm: number, dYmm: number,
     profile: ResolvedProfile, penDown: boolean,
+    signal?: AbortSignal,
   ): Promise<void> {
     const opts = optionsForProfile(profile, penDown)
     const plan = planMove(dXmm, dYmm, 0, 0, opts)
@@ -143,10 +144,11 @@ export class EBBBackend implements PlotBackend {
         phase.rate2Reg, phase.steps2, phase.accel2Reg,
       )
     }
-    // Now wait for the whole move to complete. +20ms fudge so the motor is
-    // fully at rest before the next move (or a pen state change) fires.
+    // Wait for the whole move to complete. Use an abortable sleep so Ctrl-C
+    // during a long pen-up traversal is noticed immediately rather than after
+    // the full move duration.
     if (plan.durationS > 0) {
-      await sleep(Math.round(plan.durationS * 1000) + 20)
+      await sleepAbortable(Math.round(plan.durationS * 1000) + 20, signal)
     }
   }
 
@@ -201,7 +203,7 @@ export class EBBBackend implements PlotBackend {
       // Less precise (we can't detect an early stall) but always correct
       // on working hardware.
       if (signal?.aborted) return false
-      await sleep(Math.round(totalDurationS * 1000) + 80)
+      await sleepAbortable(Math.round(totalDurationS * 1000) + 80, signal)
     }
     const last = strokePoints[strokePoints.length - 1]
     this.currentX = last.x
@@ -317,7 +319,7 @@ export class EBBBackend implements PlotBackend {
         this.penIsDown = false
       }
       if (this.useLm) {
-        await this.lmSingleMove(dx, dy, profile, false)
+        await this.lmSingleMove(dx, dy, profile, false, signal)
       } else {
         await this.ebb.move(dx, dy, percentToMms(profile.speedPenup, false))
       }
@@ -531,7 +533,7 @@ export class EBBBackend implements PlotBackend {
           const dy = move.y - this.currentY
           const dist = Math.hypot(dx, dy)
           if (dist > 0.001) {
-            if (this.useLm) await this.lmSingleMove(dx, dy, profile, false)
+            if (this.useLm) await this.lmSingleMove(dx, dy, profile, false, signal)
             else            await this.ebb.move(dx, dy, speedUp)
             this.currentX = move.x
             this.currentY = move.y
@@ -737,6 +739,16 @@ function percentToMms(percent: number, isPenDown: boolean): number {
 
 function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms))
+}
+
+// Like sleep() but resolves immediately if the signal fires, so Ctrl-C during
+// a fixed-duration wait is noticed without waiting out the full duration.
+function sleepAbortable(ms: number, signal?: AbortSignal): Promise<void> {
+  if (signal?.aborted) return Promise.resolve()
+  return new Promise<void>(resolve => {
+    const timer = setTimeout(resolve, ms)
+    signal?.addEventListener('abort', () => { clearTimeout(timer); resolve() }, { once: true })
+  })
 }
 
 function clamp01(v: number): number {
