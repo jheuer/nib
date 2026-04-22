@@ -355,7 +355,17 @@ const releaseCmd = defineCommand({
     killTimer.unref()
 
     const ebb = await connectEbb(port)
-    await ebb.penUp()
+    // ES clears any queued LM commands still in the EBB FIFO (e.g. after a
+    // forced kill mid-plot). Without this, EM,0,0 may race against in-flight
+    // motion commands and motors re-engage before the disable takes effect.
+    await ebb.emergencyStop()
+    await new Promise(r => setTimeout(r, 150))
+    // Configure servo so the S2 force-up in penUp() actually fires — without
+    // this, SP,0 can be silently ignored on 2.8.1 if the firmware thinks the
+    // pen is already up.
+    const servo = await resolveServoDefaults()
+    await ebb.configureServo(servo.penPosUp, servo.penPosDown)
+    await ebb.penUp(300)
     await ebb.disableMotors()
     // Freely-moving arm → tracked position is no longer reliable.
     await markArmUnknown()
