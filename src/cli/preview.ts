@@ -59,7 +59,7 @@ export const previewCmd = defineCommand({
     optimize: {
       type: 'string',
       description: 'Path reordering: 0=adjacent 1=nearest 2=with-reversal',
-      default: '0',
+      default: '2',
     },
     simplify: {
       type: 'string',
@@ -226,11 +226,7 @@ export const previewCmd = defineCommand({
     }
 
     if (stats.estimatedS !== null) {
-      let hint = ''
-      if (job.optimize === 0 && (stats.penLifts ?? 0) > 50) {
-        hint = chalk.dim('  try --optimize 2 to reduce lifts')
-      }
-      rows.push(['Estimated time', `${chalk.white(formatDuration(stats.estimatedS))}${hint}`])
+      rows.push(['Estimated time', chalk.white(formatDuration(stats.estimatedS))])
     }
 
     if (stats.penLifts !== null)

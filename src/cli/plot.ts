@@ -64,7 +64,7 @@ export const plotCmd = defineCommand({
     optimize: {
       type: 'string',
       description: 'Path reordering: 0=adjacent 1=nearest 2=with-reversal',
-      default: '0',
+      default: '2',
     },
     simplify: {
       type: 'string',
