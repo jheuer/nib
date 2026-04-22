@@ -12,10 +12,16 @@
   "keywords": ["axidraw", "ebb", "plotter", "generative-art", "svg", "drawing"],
   "type": "module",
   "bin": {
-    "nib": "./dist/nib"
+    "nib": "./dist/nib-cli.js"
   },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md"
+  ],
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
@@ -29,9 +35,11 @@
   "scripts": {
     "dev": "bun run src/cli/index.ts",
     "build:cli": "bun build --compile src/cli/index.ts --outfile dist/nib",
-    "build:lib": "bun build src/index.ts --outdir dist --target bun",
+    "build:cli:npm": "bun build src/cli/index.ts --outfile dist/nib-cli.js --target node && node -e \"const fs=require('fs');const f='dist/nib-cli.js';let c=fs.readFileSync(f,'utf8');if(c.startsWith('#!'))c=c.replace(/^#![^\\n]*\\n?/,'');fs.writeFileSync(f,'#!/usr/bin/env node\\n'+c)\" && chmod +x dist/nib-cli.js",
+    "build:lib": "bun build src/index.ts --outdir dist --target node",
     "build:browser": "bun build src/browser.ts --outdir dist --target browser",
-    "build": "bun run build:cli && bun run build:lib && bun run build:browser",
+    "build": "bun run build:cli && bun run build:cli:npm && bun run build:lib && bun run build:browser",
+    "prepublishOnly": "bun run build:lib && bun run build:browser && bun run build:cli:npm",
     "test": "bun test",
     "typecheck": "bunx tsc --noEmit",
     "typecheck:examples": "bunx tsc --noEmit -p tsconfig.examples.json",
