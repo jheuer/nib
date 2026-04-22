@@ -17,6 +17,7 @@ import type { JobMetrics } from '../core/job.ts'
 import {
   EbbCommands,
   SPEED_PENDOWN_MAX_MMS, SPEED_PENUP_MAX_MMS,
+  ACCEL_MAX_MMS2,
   firmwareCapabilities, type EbbCapabilities,
 } from './ebb-protocol.ts'
 import type { EbbTransport } from './transport.ts'
@@ -25,6 +26,10 @@ import { strokesToMoves, simplifyMoves, rotateMoves, translateMoves, type Stroke
 import { reorder, type OptimizeLevel } from '../core/reorder.ts'
 import { planMove, planStroke, optionsForProfile } from '../core/planner.ts'
 import { isInEnvelope, type Envelope } from '../core/envelope.ts'
+
+// How long penUpFast() waits before returning (ms). Used to compute how much
+// additional settle time is needed before short pen-up travels.
+const PEN_UP_FAST_MS = 80
 
 // Safe stderr write — process.stderr is unavailable in browser bundles.
 const stderrWrite = (msg: string) =>
@@ -523,8 +528,6 @@ export class EBBBackend implements PlotBackend {
             return { stoppedAt: (copy + i / moves.length) / copies, aborted: true }
           }
           if (this.penIsDown) {
-            // Fast lift: pen continues rising to full up while we travel.
-            // Saves ~140 ms per stroke transition vs waiting for full settle.
             await this.ebb.penUpFast()
             this.penIsDown = false
             emitter.emit('pen:up')
@@ -533,6 +536,20 @@ export class EBBBackend implements PlotBackend {
           const dy = move.y - this.currentY
           const dist = Math.hypot(dx, dy)
           if (dist > 0.001) {
+            // penUpFast already waited PEN_UP_FAST_MS. If the travel is so short
+            // that the servo won't finish rising before we arrive, wait out the
+            // remainder now — before moving. For typical plots the travel time
+            // exceeds the remaining settle so this adds zero latency.
+            //
+            // Lower-bound on travel time: the triangle (no speed-cap) profile
+            // is always the fastest possible, so it gives a conservative estimate
+            // that never over-counts travel coverage of the settle window.
+            const fullSettleMs = profile.penUpSettleMs ?? 150
+            const accelMms2 = profile.accelCapMms2 ?? ACCEL_MAX_MMS2
+            const travelLowerBoundMs = 2 * Math.sqrt(dist / accelMms2) * 1000
+            const extraSettleMs = Math.max(0, fullSettleMs - PEN_UP_FAST_MS - travelLowerBoundMs)
+            if (extraSettleMs > 0) await sleep(extraSettleMs)
+
             if (this.useLm) await this.lmSingleMove(dx, dy, profile, false, signal)
             else            await this.ebb.move(dx, dy, speedUp)
             this.currentX = move.x

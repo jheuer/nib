@@ -317,6 +317,7 @@ function deserializeProfile(raw: Record<string, unknown>): Profile {
   if (typeof raw['accel_cap_mms2']       === 'number') profile.accelCapMms2       = raw['accel_cap_mms2'] as number
   if (typeof raw['junction_deviation_mm']=== 'number') profile.junctionDeviationMm= raw['junction_deviation_mm'] as number
   if (typeof raw['servo_idle_ms']        === 'number') profile.servoIdleMs        = raw['servo_idle_ms'] as number
+  if (typeof raw['pen_up_settle_ms']     === 'number') profile.penUpSettleMs      = raw['pen_up_settle_ms'] as number
   if (typeof raw['nib_size_mm']          === 'number') profile.nibSizeMm          = raw['nib_size_mm'] as number
   if (typeof raw['color']                === 'string') profile.color              = raw['color'] as string
   return profile
@@ -337,6 +338,7 @@ function serializeProfile(profile: Profile): Record<string, unknown> {
   if (profile.accelCapMms2        !== undefined) out['accel_cap_mms2']        = profile.accelCapMms2
   if (profile.junctionDeviationMm !== undefined) out['junction_deviation_mm'] = profile.junctionDeviationMm
   if (profile.servoIdleMs         !== undefined) out['servo_idle_ms']         = profile.servoIdleMs
+  if (profile.penUpSettleMs       !== undefined) out['pen_up_settle_ms']      = profile.penUpSettleMs
   if (profile.nibSizeMm           !== undefined) out['nib_size_mm']           = profile.nibSizeMm
   if (profile.color               !== undefined) out['color']                 = profile.color
   return out

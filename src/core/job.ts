@@ -28,6 +28,13 @@ export interface Profile {
   junctionDeviationMm?: number
   /** Servo idle timeout in ms before power-off. Default: 60000 (quiet=5000). */
   servoIdleMs?: number
+  /**
+   * Total time (ms) to wait for the pen servo to reach the full up position
+   * before starting any lateral movement. The planner waits only the portion
+   * not already covered by expected travel time, so long pen-up moves pay no
+   * penalty. Increase if you see pen drag between short strokes. Default: 150.
+   */
+  penUpSettleMs?: number
 
   /**
    * Physical nib diameter in mm (e.g. 0.3 for a Staedtler 0.3, 0.5 for a
