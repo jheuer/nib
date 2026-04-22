@@ -48,23 +48,26 @@ export function resolveAutoRotate(
 
 function autoDetect(input: AutoRotateInput): AutoRotateResult {
   const { svgWidthMm: sw, svgHeightMm: sh, envelopeWidthMm: ew, envelopeHeightMm: eh } = input
-  // We need both the SVG dimensions and the machine envelope to decide. If
-  // either is missing, don't rotate — the user can set `--rotate 90` manually.
-  if (!sw || !sh || !ew || !eh) {
-    return { degrees: 0, auto: true, reason: 'dimensions unknown' }
+
+  if (!sw || !sh) {
+    return { degrees: 0, auto: true, reason: 'SVG dimensions unknown' }
   }
+
   const svgPortrait = sh > sw
-  const envLandscape = ew > eh
-  if (svgPortrait === envLandscape && svgPortrait !== (eh > ew)) {
-    // Same shape already — no rotation needed.
-  }
-  const shapeMatches = svgPortrait === (eh > ew)  // both portrait or both landscape
-  if (shapeMatches) {
+
+  // When the envelope is known, use it to determine machine orientation.
+  // When it isn't, assume landscape — every AxiDraw model is wider than tall.
+  const machineLandscape = ew && eh ? ew > eh : true
+
+  const shapeMatches = svgPortrait !== machineLandscape  // portrait≠landscape means mismatch → rotate
+  if (!shapeMatches) {
     return { degrees: 0, auto: true, reason: 'orientation matches machine' }
   }
   return {
     degrees: 90,
     auto: true,
-    reason: `${svgPortrait ? 'portrait' : 'landscape'} SVG on ${envLandscape ? 'landscape' : 'portrait'} machine`,
+    reason: svgPortrait
+      ? `portrait SVG on landscape machine`
+      : `landscape SVG on portrait machine`,
   }
 }
