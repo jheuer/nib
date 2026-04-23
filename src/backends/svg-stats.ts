@@ -13,6 +13,8 @@ export interface SvgStats {
   viewBox: { x: number; y: number; width: number; height: number } | null
   widthMm: number | null
   heightMm: number | null
+  /** Content of the SVG's first <title> element, if present. */
+  title: string | null
 }
 
 const DRAWABLE = new Set(['path', 'line', 'rect', 'circle', 'ellipse', 'polyline', 'polygon'])
@@ -46,5 +48,9 @@ export async function getSvgStats(svgContent: string): Promise<SvgStats> {
   const widthMm  = parseDimMm(root.attributes['width'])
   const heightMm = parseDimMm(root.attributes['height'])
 
-  return { pathCount, layerIds, viewBox, widthMm, heightMm }
+  // <title> is conventionally a direct child of <svg>
+  const titleNode = root.children?.find(c => c.name === 'title')
+  const title = titleNode?.children?.[0]?.value?.trim() ?? null
+
+  return { pathCount, layerIds, viewBox, widthMm, heightMm, title }
 }

@@ -165,19 +165,15 @@ export const previewCmd = defineCommand({
       optimize: ([0, 1, 2].includes(optimizeRaw) ? optimizeRaw : 0) as 0 | 1 | 2,
     })
 
-    // ── Print header ──────────────────────────────────────────────────────────
-    const name = filePath === '-' ? 'stdin' : (filePath.split('/').pop() ?? filePath)
-    process.stderr.write(`\n  ${chalk.bold('nib preview')} — ${chalk.cyan(name)}\n`)
-    process.stderr.write(`  ${chalk.dim('Profile:')}  ${profile.name} ${chalk.dim(`(${profile.speedPendown}% down · ${profile.speedPenup}% up)`)}\n\n`)
-
     // ── Compute stats from the planner (no hardware, no subprocess) ─────────
     const simplifyMm = args.simplify !== undefined
       ? parseFloat(args.simplify)
       : projectConfig?.simplifyMm
-    // Resolve rotation (incl. axicli-style auto) using the machine envelope
-    // and SVG's declared width/height.
+    // Resolve rotation before printing the header so we can include it inline.
     const envEarly = await getEffectiveEnvelope()
     let rotateDeg = 0
+    let rotateAuto = false
+    let rotateReason: string | undefined
     try {
       const rot = resolveAutoRotate(args.rotate, {
         svgWidthMm:      svgStats.widthMm,
@@ -186,13 +182,34 @@ export const previewCmd = defineCommand({
         envelopeHeightMm: envEarly?.envelope.heightMm ?? null,
       })
       rotateDeg = rot.degrees
-      if (rot.auto && rot.degrees !== 0) {
-        process.stderr.write(`  ${chalk.dim(`Auto-rotate:`)} ${rot.degrees}° (${rot.reason})\n\n`)
-      }
+      rotateAuto = rot.auto
+      rotateReason = rot.reason
     } catch (err) {
       printError((err as Error).message)
       process.exit(2)
     }
+
+    // ── Print header (after rotation is resolved so we can include it) ────────
+    const name = filePath === '-' ? 'stdin' : (filePath.split('/').pop() ?? filePath)
+    const fileBase = name.replace(/\.[^.]+$/, '')
+    process.stderr.write(`\n  ${chalk.bold('nib preview')} — ${chalk.cyan(name)}\n`)
+    if (svgStats.title && svgStats.title !== fileBase && svgStats.title !== name) {
+      process.stderr.write(`  ${chalk.dim('Title:')}    ${svgStats.title}\n`)
+    }
+    if (svgStats.widthMm && svgStats.heightMm) {
+      const orientation = svgStats.heightMm > svgStats.widthMm ? 'portrait' : 'landscape'
+      let rotNote = ''
+      if (rotateDeg) rotNote = rotateAuto
+        ? chalk.dim(`  →  rotated ${rotateDeg}° (auto)`)
+        : chalk.dim(`  →  rotated ${rotateDeg}°`)
+      process.stderr.write(`  ${chalk.dim('Size:')}     ${Math.round(svgStats.widthMm)} × ${Math.round(svgStats.heightMm)} mm  ·  ${orientation}${rotNote}\n`)
+    } else if (rotateDeg) {
+      const autoNote = rotateAuto && rotateReason ? ` (auto — ${rotateReason})` : rotateAuto ? ' (auto)' : ''
+      process.stderr.write(`  ${chalk.dim('Rotate:')}   ${rotateDeg}°${autoNote}\n`)
+    }
+    process.stderr.write(`  ${chalk.dim('Profile:')}  ${profile.name} ${chalk.dim(`(${profile.speedPendown}% down · ${profile.speedPenup}% up)`)}\n`)
+    process.stderr.write('\n')
+
     // Resolve paper early so the translate-to-paper shift applies to stats,
     // envelope-fit checks, and the browser preview identically.
     const paper = resolvePaper({

@@ -261,7 +261,9 @@ export const plotCmd = defineCommand({
     // reused for both the pre-flight envelope check and the actual plot call.
     const eff = await getEffectiveEnvelope(machineName)
     const svgStatsEarly = await getSvgStats(processedSvg)
-    let rotateDeg: number
+    let rotateDeg = 0
+    let rotateAuto = false
+    let rotateReason: string | undefined
     try {
       const rot = resolveAutoRotate(args.rotate, {
         svgWidthMm:      svgStatsEarly.widthMm,
@@ -270,9 +272,8 @@ export const plotCmd = defineCommand({
         envelopeHeightMm: eff?.envelope.heightMm ?? null,
       })
       rotateDeg = rot.degrees
-      if (rot.auto && rot.degrees !== 0) {
-        process.stderr.write(`  ${chalk.dim(`Auto-rotate:`)} ${rot.degrees}° (${rot.reason}). ${chalk.dim('Override with --rotate none.')}\n`)
-      }
+      rotateAuto = rot.auto
+      rotateReason = rot.reason
     } catch (err) {
       printError((err as Error).message)
       process.exit(2)
@@ -370,7 +371,15 @@ export const plotCmd = defineCommand({
       session: sessionNum,
     })
 
-    printPlotHeader(job.file, profile, isDryRun)
+    printPlotHeader(job.file, profile, isDryRun, {
+      svgTitle:     svgStatsEarly.title,
+      widthMm:      svgStatsEarly.widthMm,
+      heightMm:     svgStatsEarly.heightMm,
+      rotateDeg:    rotateDeg || undefined,
+      rotateAuto,
+      rotateReason,
+      machineName,
+    })
 
     if (isDryRun) {
       // Planner-driven dry-run summary: run the same pipeline a real plot

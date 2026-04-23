@@ -60,11 +60,60 @@ export function printWarning(message: string): void {
 
 // ─── Plot header ──────────────────────────────────────────────────────────────
 
-export function printPlotHeader(file: string | null, profile: ResolvedProfile, isDryRun = false): void {
+export interface PlotHeaderOpts {
+  svgTitle?: string | null
+  widthMm?: number | null
+  heightMm?: number | null
+  /** Resolved rotation in degrees (0 = no rotation). */
+  rotateDeg?: number
+  /** True if rotation was chosen automatically (auto-rotate). */
+  rotateAuto?: boolean
+  /** Human-readable reason for auto-rotation. */
+  rotateReason?: string
+  /** Machine name read from board EEPROM (QN), if any. */
+  machineName?: string
+  isDryRun?: boolean
+}
+
+export function printPlotHeader(
+  file: string | null,
+  profile: ResolvedProfile,
+  isDryRun = false,
+  opts: PlotHeaderOpts = {},
+): void {
   const name = file ? file.split('/').pop()! : 'stdin'
   process.stderr.write(`\n  ${chalk.bold('nib')} — ${chalk.cyan(name)}\n`)
+
+  // SVG title (when present and different from the filename)
+  const fileBase = name.replace(/\.[^.]+$/, '')
+  if (opts.svgTitle && opts.svgTitle !== fileBase && opts.svgTitle !== name) {
+    process.stderr.write(`  ${chalk.dim('Title:')}    ${opts.svgTitle}\n`)
+  }
+
+  // Dimensions + orientation
+  if (opts.widthMm && opts.heightMm) {
+    const orientation = opts.heightMm > opts.widthMm ? 'portrait' : 'landscape'
+    const dims = `${Math.round(opts.widthMm)} × ${Math.round(opts.heightMm)} mm  ·  ${orientation}`
+    let rotateNote = ''
+    if (opts.rotateDeg) {
+      rotateNote = opts.rotateAuto
+        ? chalk.dim(`  →  rotated ${opts.rotateDeg}° (auto)`)
+        : chalk.dim(`  →  rotated ${opts.rotateDeg}°`)
+    }
+    process.stderr.write(`  ${chalk.dim('Size:')}     ${dims}${rotateNote}\n`)
+  } else if (opts.rotateDeg) {
+    const autoNote = opts.rotateAuto ? ' (auto)' : ''
+    process.stderr.write(`  ${chalk.dim('Rotate:')}   ${opts.rotateDeg}°${autoNote}\n`)
+  }
+
+  if (opts.machineName) {
+    process.stderr.write(`  ${chalk.dim('Machine:')}  ${opts.machineName}\n`)
+  }
+
   process.stderr.write(`  ${chalk.dim('Profile:')}  ${profile.name} ${chalk.dim(`(${formatProfile(profile)})`)}\n`)
+
   if (isDryRun) process.stderr.write(`  ${chalk.yellow('Mode:')}     ${chalk.yellow('dry-run (no hardware)')}\n`)
+
   process.stderr.write('\n')
 }
 
