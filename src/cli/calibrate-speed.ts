@@ -16,7 +16,7 @@
 import { defineCommand } from 'citty'
 import chalk from 'chalk'
 import readline from 'readline'
-import { getProfile, saveProfile, loadGlobalConfig, DEFAULT_PROFILE } from '../core/config.ts'
+import { getProfile, saveProfile, listProfiles, loadGlobalConfig, DEFAULT_PROFILE } from '../core/config.ts'
 import { connectEbb, findEbbPort } from '../backends/node-serial.ts'
 import { EBBBackend } from '../backends/ebb.ts'
 import { PlotEmitter } from '../core/events.ts'
@@ -117,9 +117,19 @@ export const calibrateSpeedCmd = defineCommand({
     let profileName: string = args.profile?.trim() ?? ''
     if (!profileName) profileName = process.env.NIB_PROFILE ?? ''
     if (!profileName) profileName = (await loadGlobalConfig()).defaultProfile ?? ''
+
     if (!profileName) {
-      process.stderr.write('  Profile to calibrate: ')
-      profileName = await waitForLine()
+      const profiles = await listProfiles()
+      if (profiles.length === 0) {
+        printError('No profiles exist.', 'create one first: nib profile create <name>')
+        process.exit(1)
+      }
+      process.stderr.write('\n  Available profiles:\n')
+      for (const p of profiles) {
+        const desc = p.description ? chalk.dim('  ' + p.description) : ''
+        process.stderr.write(`    ${chalk.bold(p.name)}${desc}\n`)
+      }
+      profileName = (await linePrompt('\n  Profile to calibrate: ')).trim()
       if (!profileName) process.exit(0)
     }
 
@@ -217,10 +227,14 @@ export const calibrateSpeedCmd = defineCommand({
 
 // ─── Small input helpers ──────────────────────────────────────────────────────
 
-function waitForLine(): Promise<string> {
+function linePrompt(question: string): Promise<string> {
   return new Promise(resolve => {
     const rl = readline.createInterface({ input: process.stdin, output: process.stderr, terminal: false })
-    rl.once('line', (line) => { rl.close(); resolve(line.trim()) })
+    process.stderr.write(question)
+    rl.once('line', (line: string) => { rl.close(); resolve(line) })
+    rl.once('close', () => resolve(''))
+    // Ctrl-C while waiting for input: close readline and exit cleanly.
+    process.once('SIGINT', () => { rl.close(); process.stderr.write('\n'); process.exit(130) })
   })
 }
 
