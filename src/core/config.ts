@@ -306,7 +306,7 @@ function deserializeProfile(raw: Record<string, unknown>): Profile {
   const profile: Profile = {
     speedPendown: (raw['speed_pendown'] as number) ?? 25,
     speedPenup: (raw['speed_penup'] as number) ?? 75,
-    penPosDown: (raw['pen_pos_down'] as number) ?? 40,
+    penPosDown: (raw['pen_pos_down'] as number) ?? 30,
     penPosUp: (raw['pen_pos_up'] as number) ?? 60,
     accel: (raw['accel'] as number) ?? 75,
     constSpeed: raw['const_speed'] as boolean | undefined,
@@ -395,7 +395,7 @@ export const DEFAULT_PROFILE: ResolvedProfile = {
   name: 'default',
   speedPendown: 25,
   speedPenup: 75,
-  penPosDown: 40,
+  penPosDown: 30,
   penPosUp: 60,
   accel: 75,
   penUpSettleMs: 150,
