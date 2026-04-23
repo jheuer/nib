@@ -311,42 +311,53 @@ export class EbbCommands {
   // ── Pen state ─────────────────────────────────────────────────────────────
 
   /**
-   * Pen up. On some EBB firmware revisions (seen on 2.8.1), SP,0 is silently
-   * ignored when the firmware thinks the pen is already up — so we also fire
-   * an S2 to guarantee the servo reaches the pen-up target.
+   * Send pen-up command and S2 confirmation without sleeping. The caller is
+   * responsible for waiting long enough for the servo to physically reach the
+   * up position before issuing any lateral move. Use {@link penUp} when you
+   * want a blocking wait included.
+   *
+   * Protects against the EBB 2.8.1 firmware bug where SP,0 is silently
+   * ignored when the firmware thinks the pen is already up — the S2 command
+   * drives the servo directly and always takes effect.
    */
-  async penUp(durationMs = 200): Promise<void> {
+  async sendPenUp(durationMs: number): Promise<void> {
     await this.command(`SP,0,${durationMs}`)
     if (this.servoConfigured) {
       await this.command(`S2,${this.servoUpRaw},4,16000,0`)
     }
-    await sleep(durationMs + 20)
   }
 
   /**
-   * Pen up for between-stroke transitions: sleeps only long enough for the
-   * pen to clear paper (~80ms). The servo continues rising to full up in
-   * background while the next travel move runs.
+   * Send pen-down command and S2 confirmation without sleeping. Caller must
+   * wait {@link durationMs} + pen_delay_down before starting any stroke.
    */
-  async penUpFast(clearMs = 80): Promise<void> {
-    await this.command('SP,0,80')
-    if (this.servoConfigured) {
-      await this.command(`S2,${this.servoUpRaw},4,16000,0`)
-    }
-    await sleep(clearMs)
-  }
-
-  /**
-   * Pen down. Adds an extra 120 ms settle on top of the servo transition so
-   * the spring-loaded pen tip fully contacts paper before the next motion
-   * command fires — without this the first 2–3mm of each stroke draws in air.
-   */
-  async penDown(durationMs = 150): Promise<void> {
+  async sendPenDown(durationMs: number): Promise<void> {
     await this.command(`SP,1,${durationMs}`)
     if (this.servoConfigured) {
       await this.command(`S2,${this.servoDownRaw},4,16000,0`)
     }
-    await sleep(durationMs + 120)
+  }
+
+  /**
+   * Pen up — send command and block until the servo has reached the up
+   * position. Use for startup, cleanup, and emergency lifts where blocking
+   * is acceptable. For between-stroke transitions use {@link sendPenUp}
+   * (caller manages timing to overlap settle with travel).
+   */
+  async penUp(durationMs = 200): Promise<void> {
+    await this.sendPenUp(durationMs)
+    await sleep(durationMs + 20)
+  }
+
+  /**
+   * Pen down — send command and block until the servo has reached the down
+   * position. Use for calibration and test routines. In normal plotting,
+   * {@link sendPenDown} is used so the caller can overlap settle with the
+   * first stroke's accel phase.
+   */
+  async penDown(durationMs = 150): Promise<void> {
+    await this.sendPenDown(durationMs)
+    await sleep(durationMs + 20)
   }
 
   // ── Motion ────────────────────────────────────────────────────────────────

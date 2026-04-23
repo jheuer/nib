@@ -105,10 +105,10 @@ export function previewStatsFromMoves(moves: PlannerMove[], profile: ResolvedPro
     curY = pts[pts.length - 1].y
   }
 
-  // Pen transition overhead per stroke: ~80 ms for penUpFast (overlaps with
-  // travel), ~270 ms for penDown full settle (blocks before stroke starts).
-  // Call it 350 ms / stroke.
-  const penTransitionS = penLifts * 0.35
+  // Pen transition overhead per stroke: raise duration (≈75ms at default
+  // rate, overlaps with travel), lower duration + delay (≈150ms blocks before
+  // stroke starts). Rough estimate: 225ms / stroke.
+  const penTransitionS = penLifts * 0.225
 
   const totalM = pendownM + travelM
   const travelOverheadPct = totalM > 0 ? Math.round((travelM / totalM) * 100) : null

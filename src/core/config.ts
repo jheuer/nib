@@ -316,9 +316,12 @@ function deserializeProfile(raw: Record<string, unknown>): Profile {
   if (typeof raw['speed_cap_up_mms']     === 'number') profile.speedCapUpMms     = raw['speed_cap_up_mms'] as number
   if (typeof raw['accel_cap_mms2']       === 'number') profile.accelCapMms2       = raw['accel_cap_mms2'] as number
   if (typeof raw['junction_deviation_mm']=== 'number') profile.junctionDeviationMm= raw['junction_deviation_mm'] as number
-  if (typeof raw['servo_idle_ms']        === 'number') profile.servoIdleMs        = raw['servo_idle_ms'] as number
-  if (typeof raw['pen_up_settle_ms']     === 'number') profile.penUpSettleMs      = raw['pen_up_settle_ms'] as number
-  if (typeof raw['nib_size_mm']          === 'number') profile.nibSizeMm          = raw['nib_size_mm'] as number
+  if (typeof raw['servo_idle_ms']   === 'number') profile.servoIdleMs   = raw['servo_idle_ms'] as number
+  if (typeof raw['pen_rate_raise']  === 'number') profile.penRateRaise  = raw['pen_rate_raise'] as number
+  if (typeof raw['pen_rate_lower']  === 'number') profile.penRateLower  = raw['pen_rate_lower'] as number
+  if (typeof raw['pen_delay_up']    === 'number') profile.penDelayUp    = raw['pen_delay_up'] as number
+  if (typeof raw['pen_delay_down']  === 'number') profile.penDelayDown  = raw['pen_delay_down'] as number
+  if (typeof raw['nib_size_mm']     === 'number') profile.nibSizeMm     = raw['nib_size_mm'] as number
   if (typeof raw['color']                === 'string') profile.color              = raw['color'] as string
   return profile
 }
@@ -337,9 +340,12 @@ function serializeProfile(profile: Profile): Record<string, unknown> {
   if (profile.speedCapUpMms       !== undefined) out['speed_cap_up_mms']      = profile.speedCapUpMms
   if (profile.accelCapMms2        !== undefined) out['accel_cap_mms2']        = profile.accelCapMms2
   if (profile.junctionDeviationMm !== undefined) out['junction_deviation_mm'] = profile.junctionDeviationMm
-  if (profile.servoIdleMs         !== undefined) out['servo_idle_ms']         = profile.servoIdleMs
-  if (profile.penUpSettleMs       !== undefined) out['pen_up_settle_ms']      = profile.penUpSettleMs
-  if (profile.nibSizeMm           !== undefined) out['nib_size_mm']           = profile.nibSizeMm
+  if (profile.servoIdleMs  !== undefined) out['servo_idle_ms']  = profile.servoIdleMs
+  if (profile.penRateRaise !== undefined) out['pen_rate_raise'] = profile.penRateRaise
+  if (profile.penRateLower !== undefined) out['pen_rate_lower'] = profile.penRateLower
+  if (profile.penDelayUp   !== undefined) out['pen_delay_up']   = profile.penDelayUp
+  if (profile.penDelayDown !== undefined) out['pen_delay_down'] = profile.penDelayDown
+  if (profile.nibSizeMm    !== undefined) out['nib_size_mm']    = profile.nibSizeMm
   if (profile.color               !== undefined) out['color']                 = profile.color
   return out
 }
@@ -398,7 +404,10 @@ export const DEFAULT_PROFILE: ResolvedProfile = {
   penPosDown: 30,
   penPosUp: 60,
   accel: 75,
-  penUpSettleMs: 150,
+  penRateRaise: 75,
+  penRateLower: 50,
+  penDelayUp: 0,
+  penDelayDown: 0,
   servoIdleMs: 60_000,
 }
 

@@ -28,13 +28,28 @@ export interface Profile {
   junctionDeviationMm?: number
   /** Servo idle timeout in ms before power-off. Default: 60000 (quiet=5000). */
   servoIdleMs?: number
-  /**
-   * Total time (ms) to wait for the pen servo to reach the full up position
-   * before starting any lateral movement. The planner waits only the portion
-   * not already covered by expected travel time, so long pen-up moves pay no
-   * penalty. Increase if you see pen drag between short strokes. Default: 150.
-   */
-  penUpSettleMs?: number
+
+  // ── Servo transition rates + delays (axicli-compatible) ──────────────────
+  // These map directly to axicli's pen_rate_raise / pen_rate_lower /
+  // pen_delay_up / pen_delay_down fields so profiles can be shared or
+  // translated between the two tools without manual conversion.
+  //
+  // The SP command duration sent to the EBB is derived from the rate and the
+  // position delta so the servo speed is calibrated to actual pen travel, not
+  // an arbitrary millisecond value:
+  //
+  //   sp_duration_ms = max(10, round((100 − rate) × |penPosUp − penPosDown| × 0.1))
+  //
+  // At axicli defaults (raise=75, lower=50, delta=30): raise→75ms, lower→150ms.
+  //
+  /** Servo raise rate 1–100 (axicli: pen_rate_raise). Default 75. */
+  penRateRaise?: number
+  /** Servo lower rate 1–100 (axicli: pen_rate_lower). Default 50. */
+  penRateLower?: number
+  /** Extra ms to wait after raising before any lateral move (axicli: pen_delay_up). Default 0. */
+  penDelayUp?: number
+  /** Extra ms to wait after lowering before beginning the stroke (axicli: pen_delay_down). Default 0. */
+  penDelayDown?: number
 
   /**
    * Physical nib diameter in mm (e.g. 0.3 for a Staedtler 0.3, 0.5 for a
@@ -143,6 +158,10 @@ export function validateProfile(p: Profile): string[] {
   if (p.speedCapUpMms !== undefined && p.speedCapUpMms <= 0) errors.push('speedCapUpMms must be > 0')
   if (p.accelCapMms2  !== undefined && p.accelCapMms2  <= 0) errors.push('accelCapMms2 must be > 0')
   if (p.nibSizeMm     !== undefined && p.nibSizeMm     <= 0) errors.push('nibSizeMm must be > 0')
+  inRange('penRateRaise', p.penRateRaise, 1, 100)
+  inRange('penRateLower', p.penRateLower, 1, 100)
+  if (p.penDelayUp   !== undefined && p.penDelayUp   < 0) errors.push('penDelayUp must be ≥ 0')
+  if (p.penDelayDown !== undefined && p.penDelayDown < 0) errors.push('penDelayDown must be ≥ 0')
 
   return errors
 }

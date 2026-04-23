@@ -27,10 +27,6 @@ import { reorder, type OptimizeLevel } from '../core/reorder.ts'
 import { planMove, planStroke, optionsForProfile } from '../core/planner.ts'
 import { isInEnvelope, type Envelope } from '../core/envelope.ts'
 
-// How long penUpFast() waits before returning (ms). Used to compute how much
-// additional settle time is needed before short pen-up travels.
-const PEN_UP_FAST_MS = 80
-
 // Safe stderr write — process.stderr is unavailable in browser bundles.
 const stderrWrite = (msg: string) =>
   typeof process !== 'undefined' && typeof process.stderr?.write === 'function'
@@ -46,6 +42,14 @@ export class EBBBackend implements PlotBackend {
   private penIsDown = false
   private useLm = false
   private penReadyForFirstStroke = false
+  /** SP duration (ms) to raise pen, computed from active profile. Updated in runMoves/configureSession. */
+  private servoRaiseDurationMs = 150
+  /** SP duration (ms) to lower pen, computed from active profile. */
+  private servoLowerDurationMs = 150
+  /** Extra ms to wait after raising before any lateral move (pen_delay_up). */
+  private penDelayUpMs = 0
+  /** Extra ms to wait after lowering before beginning the stroke (pen_delay_down). */
+  private penDelayDownMs = 0
   /** Firmware capability flags, populated by `connect()`. Defaults to "nothing
    *  available" so methods that call into guarded features fail cleanly if
    *  they're (incorrectly) called before connect. */
@@ -96,19 +100,19 @@ export class EBBBackend implements PlotBackend {
 
   async penUp(height: number, _rate: number): Promise<void> {
     await this.ebb.configureServo(height, height)
-    await this.ebb.penUp()
+    await this.ebb.penUp(this.servoRaiseDurationMs)
     this.penIsDown = false
   }
 
   async penDown(height: number, _rate: number): Promise<void> {
     await this.ebb.configureServo(height, height)
-    await this.ebb.penDown()
+    await this.ebb.penDown(this.servoLowerDurationMs)
     this.penIsDown = true
   }
 
   async home(): Promise<void> {
     if (this.penIsDown) {
-      await this.ebb.penUp()
+      await this.ebb.penUp(this.servoRaiseDurationMs)
       this.penIsDown = false
     }
 
@@ -241,7 +245,7 @@ export class EBBBackend implements PlotBackend {
       await sleep(100)  // let the firmware process ES and settle
     }
     if (this.penIsDown) {
-      await this.ebb.penUp().catch(() => undefined)
+      await this.ebb.penUp(this.servoRaiseDurationMs).catch(() => undefined)
       this.penIsDown = false
     }
     // On user-initiated pause we skip home so the resume/abort prompt appears
@@ -269,7 +273,7 @@ export class EBBBackend implements PlotBackend {
       )
     }
     if (this.penIsDown) {
-      await this.ebb.penUp().catch(() => undefined)
+      await this.ebb.penUp(this.servoRaiseDurationMs).catch(() => undefined)
       this.penIsDown = false
     }
     await this.ebb.homeMove()
@@ -288,6 +292,10 @@ export class EBBBackend implements PlotBackend {
     // guaranteeing the pen is physically up before the arm moves.
     await this.ebb.configureServo(profile.penPosUp, profile.penPosDown)
     await this.ebb.setServoTimeout(profile.servoIdleMs ?? 60_000)
+    this.servoRaiseDurationMs = servoDurationMs(profile.penRateRaise ?? 75, profile.penPosUp, profile.penPosDown)
+    this.servoLowerDurationMs = servoDurationMs(profile.penRateLower ?? 50, profile.penPosUp, profile.penPosDown)
+    this.penDelayUpMs   = profile.penDelayUp   ?? 0
+    this.penDelayDownMs = profile.penDelayDown ?? 0
     this.penIsDown = false
     this.penReadyForFirstStroke = false
   }
@@ -310,7 +318,7 @@ export class EBBBackend implements PlotBackend {
     // we do it here instead, right before the arm first needs to move.
     if (!this.penReadyForFirstStroke) {
       this.penReadyForFirstStroke = true
-      await this.ebb.penUp()
+      await this.ebb.penUp(this.servoRaiseDurationMs)
       this.penIsDown = false
     }
 
@@ -320,8 +328,9 @@ export class EBBBackend implements PlotBackend {
     const dy = start.y - this.currentY
     if (Math.hypot(dx, dy) > 0.001) {
       if (this.penIsDown) {
-        await this.ebb.penUpFast()
+        await this.ebb.sendPenUp(this.servoRaiseDurationMs)
         this.penIsDown = false
+        await sleep(this.servoRaiseDurationMs + this.penDelayUpMs)
       }
       if (this.useLm) {
         await this.lmSingleMove(dx, dy, profile, false, signal)
@@ -334,8 +343,9 @@ export class EBBBackend implements PlotBackend {
 
     // Pen down + run the stroke.
     if (!this.penIsDown) {
-      await this.ebb.penDown()
+      await this.ebb.sendPenDown(this.servoLowerDurationMs)
       this.penIsDown = true
+      await sleep(this.servoLowerDurationMs + this.penDelayDownMs)
     }
     if (this.useLm) {
       await this.runStroke(points, profile, signal)
@@ -352,7 +362,7 @@ export class EBBBackend implements PlotBackend {
     }
 
     // Lift at the end so the user can see the finished stroke cleanly.
-    await this.ebb.penUpFast().catch(() => undefined)
+    await this.ebb.penUp(this.servoRaiseDurationMs).catch(() => undefined)
     this.penIsDown = false
   }
 
@@ -393,7 +403,7 @@ export class EBBBackend implements PlotBackend {
   /** Lift pen if it is currently down. No-op if already up. */
   async liftPen(): Promise<void> {
     if (this.penIsDown) {
-      await this.ebb.penUpFast()
+      await this.ebb.penUp(this.servoRaiseDurationMs)
       this.penIsDown = false
     }
   }
@@ -478,7 +488,11 @@ export class EBBBackend implements PlotBackend {
 
     await this.ebb.configureServo(profile.penPosUp, profile.penPosDown)
     await this.ebb.setServoTimeout(profile.servoIdleMs ?? 60_000)
-    await this.ebb.penUp()
+    this.servoRaiseDurationMs = servoDurationMs(profile.penRateRaise ?? 75, profile.penPosUp, profile.penPosDown)
+    this.servoLowerDurationMs = servoDurationMs(profile.penRateLower ?? 50, profile.penPosUp, profile.penPosDown)
+    this.penDelayUpMs   = profile.penDelayUp   ?? 0
+    this.penDelayDownMs = profile.penDelayDown ?? 0
+    await this.ebb.penUp(this.servoRaiseDurationMs)
     this.penIsDown = false
 
     if (rawMoves.length === 0) {
@@ -528,7 +542,13 @@ export class EBBBackend implements PlotBackend {
             return { stoppedAt: (copy + i / moves.length) / copies, aborted: true }
           }
           if (this.penIsDown) {
-            await this.ebb.penUpFast()
+            // Send pen-up command immediately — servo starts rising. We then
+            // compute how much of the settle window is covered by the upcoming
+            // travel move and sleep only the remaining gap. This way:
+            //   • long travels (≥ settle window): no extra wait — same as before
+            //   • short travels (convergence zones, hatching): pen is fully up
+            //     before the arm arrives at the next stroke start
+            await this.ebb.sendPenUp(this.servoRaiseDurationMs)
             this.penIsDown = false
             emitter.emit('pen:up')
           }
@@ -536,18 +556,12 @@ export class EBBBackend implements PlotBackend {
           const dy = move.y - this.currentY
           const dist = Math.hypot(dx, dy)
           if (dist > 0.001) {
-            // penUpFast already waited PEN_UP_FAST_MS. If the travel is so short
-            // that the servo won't finish rising before we arrive, wait out the
-            // remainder now — before moving. For typical plots the travel time
-            // exceeds the remaining settle so this adds zero latency.
-            //
-            // Lower-bound on travel time: the triangle (no speed-cap) profile
-            // is always the fastest possible, so it gives a conservative estimate
-            // that never over-counts travel coverage of the settle window.
-            const fullSettleMs = profile.penUpSettleMs ?? 150
+            const totalSettleMs = this.servoRaiseDurationMs + this.penDelayUpMs
             const accelMms2 = profile.accelCapMms2 ?? ACCEL_MAX_MMS2
+            // Triangle profile (no speed cap) is the fastest possible travel —
+            // a lower bound on actual travel time, so extraSettleMs is always safe.
             const travelLowerBoundMs = 2 * Math.sqrt(dist / accelMms2) * 1000
-            const extraSettleMs = Math.max(0, fullSettleMs - PEN_UP_FAST_MS - travelLowerBoundMs)
+            const extraSettleMs = Math.max(0, totalSettleMs - travelLowerBoundMs)
             if (extraSettleMs > 0) await sleep(extraSettleMs)
 
             if (this.useLm) await this.lmSingleMove(dx, dy, profile, false, signal)
@@ -586,10 +600,15 @@ export class EBBBackend implements PlotBackend {
         }
 
         if (!this.penIsDown) {
-          await this.ebb.penDown()
+          await this.ebb.sendPenDown(this.servoLowerDurationMs)
           this.penIsDown = true
           penLifts++
           emitter.emit('pen:down')
+          // Wait for the servo to reach the paper plus any profile-specified
+          // extra delay. pen_delay_down = 0 (axicli default) means trust the
+          // SP duration; increase it if the pen needs more settle time before
+          // the stroke begins.
+          await sleep(this.servoLowerDurationMs + this.penDelayDownMs)
         }
 
         if (this.useLm) {
@@ -631,7 +650,7 @@ export class EBBBackend implements PlotBackend {
       await sleep(300)
       // Also update firmware pen-state so later SP commands in this session
       // behave correctly.
-      await this.ebb.penUp().catch(() => undefined)
+      await this.ebb.penUp(this.servoRaiseDurationMs).catch(() => undefined)
       this.penIsDown = false
       await this.home()
     }
@@ -748,6 +767,20 @@ export async function runJobEbb(
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
+
+/**
+ * Convert an axicli-style pen rate (1–100) and position delta (0–100) to an
+ * EBB SP command duration in milliseconds.
+ *
+ * Formula: max(10, round((100 − rate) × delta × 0.1))
+ *
+ * Calibrated so axicli defaults (raise=75, lower=50, delta=30) produce
+ * raise→75ms and lower→150ms — matching the previously hardcoded values.
+ */
+function servoDurationMs(rate: number, penPosUp: number, penPosDown: number): number {
+  const delta = Math.abs(penPosUp - penPosDown)
+  return Math.max(10, Math.round((100 - rate) * delta * 0.1))
+}
 
 function percentToMms(percent: number, isPenDown: boolean): number {
   const maxMms = isPenDown ? SPEED_PENDOWN_MAX_MMS : SPEED_PENUP_MAX_MMS
