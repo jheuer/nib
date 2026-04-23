@@ -126,6 +126,10 @@ export const plotCmd = defineCommand({
       description: 'Append a Hershey-text metadata strip to the plot (overrides axidraw.toml plot_card.enabled)',
       default: false,
     },
+    'start-from': {
+      type: 'string',
+      description: 'Start mid-plot: fraction 0–1 or percent 0–100 (e.g. 0.5 or 50). Arm must be at home.',
+    },
   },
   async run({ args }) {
     const profileName = args.profile ?? process.env.NIB_PROFILE
@@ -136,6 +140,21 @@ export const plotCmd = defineCommand({
     if (![0, 1, 2].includes(optimizeRaw)) {
       printError(`--optimize must be 0, 1, or 2 (got: ${args.optimize})`)
       process.exit(2)
+    }
+
+    // Parse --start-from (percent or fraction)
+    let startFrom: number | undefined
+    if (args['start-from'] !== undefined) {
+      const raw = parseFloat(args['start-from'])
+      if (isNaN(raw) || raw < 0) {
+        printError(`--start-from must be a fraction (0–1) or percent (0–100), got: ${args['start-from']}`)
+        process.exit(2)
+      }
+      startFrom = raw > 1 ? raw / 100 : raw
+      if (startFrom > 1) {
+        printError(`--start-from ${args['start-from']} is out of range (max 100%)`)
+        process.exit(2)
+      }
     }
 
     // ── Live mode: stream SVG paths from a subprocess ────────────────────────
@@ -171,10 +190,12 @@ export const plotCmd = defineCommand({
     // Each nib process resets currentX/Y to 0 in software. If a prior command
     // left the arm elsewhere (or the user released motors), the physical arm
     // isn't at origin — but we'll assume it is. Warn before that goes wrong.
+    // Skip when --start-from is given: user is deliberately resuming mid-plot
+    // and is responsible for having the arm at home.
     {
       const state = await loadArmState()
       const atOrigin = !state.unknown && Math.abs(state.x) < 0.01 && Math.abs(state.y) < 0.01
-      if (!atOrigin && !args.yes) {
+      if (!atOrigin && !args.yes && startFrom === undefined) {
         if (state.unknown) {
           printWarning('arm position is unknown — last command released motors')
         } else {
@@ -474,6 +495,13 @@ export const plotCmd = defineCommand({
       const simplifyMm = args.simplify !== undefined
         ? parseFloat(args.simplify)
         : projectConfig?.simplifyMm
+
+      // SVG over-sampling screening: warn before committing ink if the SVG has
+      // many sub-mm segments (common with Inkscape exports that over-sample curves).
+      if (!startFrom) {
+        screenForOverSampling(processedSvg, simplifyMm)
+      }
+
       const result = await runJobEbb(
         job, emitter,
         {
@@ -484,6 +512,8 @@ export const plotCmd = defineCommand({
           simplifyMm,
           rotateDeg,
           translateMm,
+          startFrom,
+          homeBeforeRun: (startFrom ?? 0) > 0,
         },
         controller.signal,
       )
@@ -608,6 +638,36 @@ async function doPlot(
   if (!result.aborted) {
     emitter.emit('complete', job.metrics)
   }
+}
+
+/**
+ * Scan moves for over-sampled paths (sub-mm segments) and warn the user.
+ * Over-sampled SVGs drive the EBB with many redundant LM commands, slow the
+ * pipeline, and can produce waviness when junction velocity is limited by
+ * many tiny segments in sequence. The fix is --simplify 0.1 (or similar).
+ */
+function screenForOverSampling(svg: string, simplifyMm?: number): void {
+  if (simplifyMm && simplifyMm > 0) return  // already simplifying
+
+  const moves = svgToMoves(svg, { tolerance: 0.05 })
+  let pendownSegments = 0
+  let shortSegments = 0
+
+  for (let i = 1; i < moves.length; i++) {
+    if (!moves[i].penDown) continue
+    pendownSegments++
+    const dx = moves[i].x - moves[i - 1].x
+    const dy = moves[i].y - moves[i - 1].y
+    if (dx * dx + dy * dy < 0.01) shortSegments++  // < 0.1mm
+  }
+
+  if (pendownSegments < 200 || shortSegments < 50) return
+  const pct = Math.round((shortSegments / pendownSegments) * 100)
+  if (pct < 25) return
+
+  printWarning(
+    `${shortSegments.toLocaleString()} of ${pendownSegments.toLocaleString()} pen-down segments are <0.1 mm (${pct}%) — SVG may be over-sampled. Add --simplify 0.1 to merge them (safe for most SVGs)`,
+  )
 }
 
 function printLayerList(svg: string): void {
