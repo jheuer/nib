@@ -16,7 +16,7 @@
 import { defineCommand } from 'citty'
 import chalk from 'chalk'
 import readline from 'readline'
-import { getProfile, saveProfile } from '../core/config.ts'
+import { getProfile, saveProfile, loadGlobalConfig, DEFAULT_PROFILE } from '../core/config.ts'
 import { connectEbb, findEbbPort } from '../backends/node-serial.ts'
 import { EBBBackend } from '../backends/ebb.ts'
 import { PlotEmitter } from '../core/events.ts'
@@ -108,15 +108,25 @@ export const calibrateSpeedCmd = defineCommand({
     description: 'Interactive speed discovery — plots test patterns and records the safe max speed for a profile',
   },
   args: {
-    profile: { type: 'positional', description: 'Profile name to tune' },
+    profile: { type: 'positional', description: 'Profile name to tune (optional — defaults to NIB_PROFILE / global default)', required: false },
     port:    { type: 'string', description: 'Serial port (env: NIB_PORT)' },
     yes:     { type: 'boolean', alias: 'y', description: 'Skip prompts', default: false },
   },
   async run({ args }) {
-    const profile = await getProfile(args.profile)
-    if (!profile) {
-      printError(`profile "${args.profile}" not found`, 'create one first with `nib profile create`')
-      process.exit(1)
+    // Resolve profile name: arg → NIB_PROFILE env → global default → prompt
+    let profileName: string = args.profile?.trim() ?? ''
+    if (!profileName) profileName = process.env.NIB_PROFILE ?? ''
+    if (!profileName) profileName = (await loadGlobalConfig()).defaultProfile ?? ''
+    if (!profileName) {
+      process.stderr.write('  Profile to calibrate: ')
+      profileName = await waitForLine()
+      if (!profileName) process.exit(0)
+    }
+
+    const existing = await getProfile(profileName)
+    const profile = existing ?? { ...DEFAULT_PROFILE, name: profileName }
+    if (!existing) {
+      process.stderr.write(`  Profile "${profileName}" not found — will create from defaults after calibration.\n`)
     }
 
     const rawPort = args.port ?? process.env.NIB_PORT
@@ -206,6 +216,13 @@ export const calibrateSpeedCmd = defineCommand({
 })
 
 // ─── Small input helpers ──────────────────────────────────────────────────────
+
+function waitForLine(): Promise<string> {
+  return new Promise(resolve => {
+    const rl = readline.createInterface({ input: process.stdin, output: process.stderr, terminal: false })
+    rl.once('line', (line) => { rl.close(); resolve(line.trim()) })
+  })
+}
 
 function waitForEnter(): Promise<void> {
   return new Promise(resolve => {
