@@ -231,7 +231,7 @@ function linePrompt(question: string): Promise<string> {
   return new Promise(resolve => {
     const rl = readline.createInterface({ input: process.stdin, output: process.stderr, terminal: false })
     process.stderr.write(question)
-    rl.once('line', (line: string) => { rl.close(); resolve(line) })
+    rl.once('line', (line: string) => { resolve(line); rl.close() })
     rl.once('close', () => resolve(''))
     // Ctrl-C while waiting for input: close readline and exit cleanly.
     process.once('SIGINT', () => { rl.close(); process.stderr.write('\n'); process.exit(130) })
