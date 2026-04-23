@@ -4,7 +4,7 @@ import { readFile } from 'fs/promises'
 import { existsSync } from 'fs'
 import { resolve } from 'path'
 import { homedir } from 'os'
-import { resolveProfile, loadProjectConfig, addProfileWear, penWearWarning, incrementSession, getMachineEnvelope, getEffectiveEnvelope, loadGlobalConfig } from '../core/config.ts'
+import { resolveProfile, loadProjectConfig, addProfileWear, penWearWarning, incrementSession, getMachineEnvelope, getEffectiveEnvelope, loadGlobalConfig, saveResumeState, clearResumeState } from '../core/config.ts'
 import { connectEbb } from '../backends/node-serial.ts'
 import { findFirstOutOfBounds } from '../core/envelope.ts'
 import { svgToMoves } from '../backends/svg-to-moves.ts'
@@ -504,8 +504,25 @@ export const plotCmd = defineCommand({
         } else {
           job.status = 'aborted'
           job.stoppedAt = result.stoppedAt
+          // Persist state so `nib resume` can restart without re-running setup.
+          const layerNum = args.layer !== undefined ? parseInt(args.layer, 10) : undefined
+          const simplifyMm = args.simplify !== undefined
+            ? parseFloat(args.simplify)
+            : projectConfig?.simplifyMm
+          await saveResumeState({
+            file: filePath === '/dev/stdin' ? null : resolve(filePath),
+            profile: profileName ?? null,
+            stoppedAt: result.stoppedAt,
+            timestamp: new Date().toISOString(),
+            optimize: optimize,
+            rotateDeg,
+            translateX: translateMm.x,
+            translateY: translateMm.y,
+            simplifyMm,
+            layer: layerNum,
+          })
           process.stderr.write(`  Job #${id} saved (aborted at ${Math.round(result.stoppedAt * 100)}%).\n`)
-          process.stderr.write(`  ${chalk.dim('Arm position unknown — run')} ${chalk.cyan('nib home')} ${chalk.dim('before your next plot.')}\n\n`)
+          process.stderr.write(`  ${chalk.dim('Run')} ${chalk.cyan('nib resume')} ${chalk.dim('to continue from where it stopped.')}\n\n`)
           // Arm position is stale (we skipped home on pause). Flag it so the
           // next plot requires a manual home first.
           await markArmUnknown()
@@ -523,6 +540,7 @@ export const plotCmd = defineCommand({
       // Backend homes at end of every copy — arm is at origin.
       await resetArmState()
       await addProfileWear(profile.name, job.metrics.pendownM)
+      await clearResumeState()
       await fireCompleteHook(job.hooks, {
         file: job.file,
         profile: profile.name,

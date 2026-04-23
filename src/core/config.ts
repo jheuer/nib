@@ -11,7 +11,86 @@ import type { PlotCardConfig, PlotCardField } from './plot-card.ts'
 export const NIB_CONFIG_DIR = join(homedir(), '.config', 'nib')
 export const PROFILES_PATH = join(NIB_CONFIG_DIR, 'profiles.toml')
 export const GLOBAL_CONFIG_PATH = join(NIB_CONFIG_DIR, 'config.toml')
+export const RESUME_STATE_PATH = join(NIB_CONFIG_DIR, 'resume.toml')
 export const PROJECT_CONFIG_NAME = 'axidraw.toml'
+
+// ─── Resume state ─────────────────────────────────────────────────────────────
+
+/**
+ * Persisted state written when a plot is interrupted so `nib resume` can
+ * restart from the exact fractional position without re-running the full
+ * plot setup. Written on Ctrl-C + quit; cleared on successful completion.
+ */
+export interface ResumeState {
+  /** Absolute path to the SVG file (null = was read from stdin, can't resume). */
+  file: string | null
+  /** Profile name, or null if the default profile was used. */
+  profile: string | null
+  /** Fractional position 0–1 where the job was interrupted. */
+  stoppedAt: number
+  /** ISO timestamp of when the interruption was recorded. */
+  timestamp: string
+  /** Path reordering level used in the original plot (0/1/2). */
+  optimize: 0 | 1 | 2
+  /** Resolved rotation in degrees (0 if none). */
+  rotateDeg: number
+  /** Resolved translate offset in mm. */
+  translateX: number
+  translateY: number
+  /** Simplification tolerance in mm, if any. */
+  simplifyMm?: number
+  /** Layer filter, if any. */
+  layer?: number
+}
+
+export async function saveResumeState(state: ResumeState): Promise<void> {
+  await ensureConfigDir()
+  const data: Record<string, unknown> = {
+    file:        state.file ?? '',
+    profile:     state.profile ?? '',
+    stopped_at:  state.stoppedAt,
+    timestamp:   state.timestamp,
+    optimize:    state.optimize,
+    rotate_deg:  state.rotateDeg,
+    translate_x: state.translateX,
+    translate_y: state.translateY,
+  }
+  if (state.simplifyMm !== undefined) data['simplify_mm'] = state.simplifyMm
+  if (state.layer      !== undefined) data['layer']       = state.layer
+  await writeFile(RESUME_STATE_PATH, stringify(data), 'utf-8')
+}
+
+export async function loadResumeState(): Promise<ResumeState | null> {
+  if (!existsSync(RESUME_STATE_PATH)) return null
+  try {
+    const raw = await readFile(RESUME_STATE_PATH, 'utf-8')
+    const data = parse(raw) as Record<string, unknown>
+    const file    = (data['file']    as string | undefined) || null
+    const profile = (data['profile'] as string | undefined) || null
+    const optimize = (data['optimize'] as number | undefined) ?? 2
+    return {
+      file:        file === '' ? null : file,
+      profile:     profile === '' ? null : profile,
+      stoppedAt:   (data['stopped_at']  as number) ?? 0,
+      timestamp:   (data['timestamp']   as string) ?? new Date().toISOString(),
+      optimize:    ([0, 1, 2].includes(optimize) ? optimize : 2) as 0 | 1 | 2,
+      rotateDeg:   (data['rotate_deg']  as number) ?? 0,
+      translateX:  (data['translate_x'] as number) ?? 0,
+      translateY:  (data['translate_y'] as number) ?? 0,
+      simplifyMm:  data['simplify_mm']  as number | undefined,
+      layer:       data['layer']        as number | undefined,
+    }
+  } catch {
+    return null
+  }
+}
+
+export async function clearResumeState(): Promise<void> {
+  const { unlink } = await import('fs/promises')
+  if (existsSync(RESUME_STATE_PATH)) {
+    await unlink(RESUME_STATE_PATH)
+  }
+}
 
 // ─── Global config ────────────────────────────────────────────────────────────
 
