@@ -386,7 +386,23 @@ export async function cloneProfile(
   return { name: destName, ...cloned }
 }
 
-/** Resolve a profile name → ResolvedProfile, falling back to global default then hardcoded axicli defaults */
+/**
+ * Built-in profile used when no profile is configured. All optional fields are
+ * filled in so consumers never need scattered `?? X` fallbacks. Values match
+ * axicli defaults where they exist; nib-specific fields use safe defaults.
+ */
+export const DEFAULT_PROFILE: ResolvedProfile = {
+  name: 'default',
+  speedPendown: 25,
+  speedPenup: 75,
+  penPosDown: 40,
+  penPosUp: 60,
+  accel: 75,
+  penUpSettleMs: 150,
+  servoIdleMs: 60_000,
+}
+
+/** Resolve a profile name → ResolvedProfile, falling back to global default then DEFAULT_PROFILE */
 export async function resolveProfile(name?: string): Promise<ResolvedProfile> {
   const targetName = name ?? (await loadGlobalConfig()).defaultProfile
   if (targetName) {
@@ -394,15 +410,7 @@ export async function resolveProfile(name?: string): Promise<ResolvedProfile> {
     if (profile) return profile
     throw new Error(`Profile "${targetName}" not found. Run: nib profile list`)
   }
-  // Fallback to axicli defaults
-  return {
-    name: 'default',
-    speedPendown: 25,
-    speedPenup: 75,
-    penPosDown: 40,
-    penPosUp: 60,
-    accel: 75,
-  }
+  return DEFAULT_PROFILE
 }
 
 // ─── Machine envelope resolution ──────────────────────────────────────────────
