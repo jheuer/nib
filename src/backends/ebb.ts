@@ -777,7 +777,7 @@ export async function runJobEbb(
  * Calibrated so axicli defaults (raise=75, lower=50, delta=30) produce
  * raise→75ms and lower→150ms — matching the previously hardcoded values.
  */
-function servoDurationMs(rate: number, penPosUp: number, penPosDown: number): number {
+export function servoDurationMs(rate: number, penPosUp: number, penPosDown: number): number {
   const delta = Math.abs(penPosUp - penPosDown)
   return Math.max(10, Math.round((100 - rate) * delta * 0.1))
 }
